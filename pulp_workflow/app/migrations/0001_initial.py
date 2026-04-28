@@ -34,6 +34,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'permissions': [('manage_roles_workflow', 'Can manage role assignments on workflows')],
+                'default_permissions': ('add', 'change', 'view'),
             },
             bases=(django_lifecycle.mixins.LifecycleModelMixin, models.Model),
         ),

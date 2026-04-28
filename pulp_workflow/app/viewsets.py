@@ -1,9 +1,15 @@
-from rest_framework import mixins
+from django.db import transaction
+from django.utils import timezone
+from drf_spectacular.utils import extend_schema
+from rest_framework import mixins, status
+from rest_framework.response import Response
 
+from pulpcore.constants import TASK_STATES
+from pulpcore.plugin.models import TaskSchedule
 from pulpcore.plugin.viewsets import NamedModelViewSet, RolesMixin
 
 from pulp_workflow.app.models import Workflow
-from pulp_workflow.app.serializers import WorkflowSerializer
+from pulp_workflow.app.serializers import WorkflowCancelSerializer, WorkflowSerializer
 
 
 class WorkflowViewSet(
@@ -11,14 +17,13 @@ class WorkflowViewSet(
     mixins.CreateModelMixin,
     mixins.RetrieveModelMixin,
     mixins.ListModelMixin,
-    mixins.DestroyModelMixin,
     RolesMixin,
 ):
     """
     A ViewSet for managing Workflows.
 
     Workflows are created with their full set of tasks and are immutable thereafter; to
-    change a workflow, delete it and create a new one.
+    change a workflow, cancel it (if it has not yet started) and create a new one.
     """
 
     queryset = Workflow.objects.all().prefetch_related("tasks")
@@ -42,7 +47,8 @@ class WorkflowViewSet(
             {
                 "action": [
                     "create",
-                    "destroy",
+                    "update",
+                    "partial_update",
                     "list_roles",
                     "add_role",
                     "remove_role",
@@ -58,8 +64,40 @@ class WorkflowViewSet(
         "workflow.workflow_admin": [
             "workflow.view_workflow",
             "workflow.change_workflow",
-            "workflow.delete_workflow",
             "workflow.manage_roles_workflow",
         ],
         "workflow.workflow_viewer": ["workflow.view_workflow"],
     }
+
+    def get_serializer_class(self):
+        if self.action == "partial_update":
+            return WorkflowCancelSerializer
+        return super().get_serializer_class()
+
+    @extend_schema(
+        description=(
+            "Cancel a workflow. A workflow can only be canceled before it has started "
+            "executing; otherwise this returns 409 Conflict."
+        ),
+        summary="Cancel a workflow",
+        operation_id="workflows_cancel",
+        responses={200: WorkflowSerializer, 409: WorkflowSerializer},
+    )
+    def partial_update(self, request, pk=None, partial=True):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        workflow = self.get_object()
+        with transaction.atomic():
+            workflow = Workflow.objects.select_for_update().get(pk=workflow.pk)
+            if workflow.state == TASK_STATES.WAITING:
+                workflow.state = TASK_STATES.CANCELED
+                workflow.finished_at = timezone.now()
+                workflow.save(update_fields=["state", "finished_at", "pulp_last_updated"])
+                TaskSchedule.objects.filter(name=f"pulp_workflow.workflow:{workflow.pk}").delete()
+                http_status = None
+            else:
+                http_status = status.HTTP_409_CONFLICT
+
+        out = WorkflowSerializer(workflow, context={"request": request})
+        return Response(out.data, status=http_status)

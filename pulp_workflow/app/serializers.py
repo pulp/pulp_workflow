@@ -191,3 +191,22 @@ class WorkflowSerializer(ModelSerializer):
             dispatch_interval=None,
         )
         return workflow
+
+
+class WorkflowCancelSerializer(serializers.Serializer):
+    """Serializer used to validate the body of a workflow cancel (PATCH) request."""
+
+    state = serializers.CharField(
+        help_text=_("The desired state of the workflow. Only 'canceled' is accepted."),
+        required=True,
+    )
+
+    def validate_state(self, value):
+        if value != "canceled":
+            raise serializers.ValidationError(
+                _("The only acceptable value for 'state' is 'canceled'.")
+            )
+        return value
+
+    class Meta:
+        fields = ("state",)

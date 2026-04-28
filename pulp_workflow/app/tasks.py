@@ -2,6 +2,7 @@ import logging
 import time
 import traceback
 
+from django.db import transaction
 from django.utils import timezone
 
 from pulpcore.constants import TASK_FINAL_STATES, TASK_STATES
@@ -82,11 +83,17 @@ def execute_workflow(workflow_pk):
     Args:
         workflow_pk (str): The primary key of the Workflow to execute.
     """
-    workflow = Workflow.objects.get(pk=workflow_pk)
-
-    workflow.state = TASK_STATES.RUNNING
-    workflow.started_at = timezone.now()
-    workflow.save(update_fields=["state", "started_at", "pulp_last_updated"])
+    with transaction.atomic():
+        workflow = Workflow.objects.select_for_update().get(pk=workflow_pk)
+        if workflow.state == TASK_STATES.CANCELED:
+            _log.info(
+                "Workflow %s was canceled before starting; skipping execution.",
+                workflow.name,
+            )
+            return
+        workflow.state = TASK_STATES.RUNNING
+        workflow.started_at = timezone.now()
+        workflow.save(update_fields=["state", "started_at", "pulp_last_updated"])
 
     prev_task = None
     for wf_task in workflow.tasks.all():

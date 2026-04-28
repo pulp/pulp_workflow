@@ -1,4 +1,5 @@
 import uuid
+from contextlib import suppress
 
 import pytest
 
@@ -21,8 +22,15 @@ def workflow_bindings(_api_client_set, bindings_cfg):
 
 
 @pytest.fixture
-def workflow_factory(workflow_bindings, add_to_cleanup):
-    """A factory to generate a Workflow with auto-cleanup."""
+def workflow_factory(workflow_bindings):
+    """A factory to generate a Workflow.
+
+    Best-effort cleanup attempts to cancel the workflow at teardown; canceling only
+    succeeds while the workflow is still in the ``waiting`` state, so workflows that
+    have started executing are simply left in their final state.
+    """
+
+    created = []
 
     def _create_workflow(**kwargs):
         kwargs.setdefault("name", str(uuid.uuid4()))
@@ -36,7 +44,11 @@ def workflow_factory(workflow_bindings, add_to_cleanup):
             ],
         )
         workflow = workflow_bindings.WorkflowsApi.create(kwargs)
-        add_to_cleanup(workflow_bindings.WorkflowsApi, workflow.pulp_href)
+        created.append(workflow.pulp_href)
         return workflow
 
-    return _create_workflow
+    yield _create_workflow
+
+    for href in reversed(created):
+        with suppress(Exception):
+            workflow_bindings.WorkflowsApi.partial_update(href, {"state": "canceled"})

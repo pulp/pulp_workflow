@@ -114,29 +114,52 @@ def test_list_workflows(workflow_bindings, workflow_factory):
 
 
 @pytest.mark.parallel
-def test_delete_workflow(workflow_bindings):
-    """A Workflow can be deleted; subsequent reads 404."""
-    workflow = workflow_bindings.WorkflowsApi.create(
-        {
-            "name": str(uuid.uuid4()),
-            "tasks": [
-                {"index": 0, "task_name": "pulpcore.app.tasks.orphan_cleanup"},
-            ],
-        }
+def test_delete_workflow_not_supported(workflow_bindings):
+    """The destroy endpoint has been removed; bindings do not expose ``delete``."""
+    api = workflow_bindings.WorkflowsApi
+    assert not hasattr(api, "delete")
+
+
+@pytest.mark.parallel
+def test_cancel_workflow(workflow_bindings, workflow_factory):
+    """A waiting Workflow can be canceled and reaches the canceled state."""
+    # Schedule the workflow far enough in the future that it cannot start before
+    # the cancel request is processed.
+    from datetime import datetime, timedelta, timezone
+
+    start_time = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    workflow = workflow_factory(start_time=start_time)
+    assert workflow.state == "waiting"
+
+    canceled = workflow_bindings.WorkflowsApi.partial_update(
+        workflow.pulp_href, {"state": "canceled"}
     )
-    workflow_bindings.WorkflowsApi.delete(workflow.pulp_href)
+    assert canceled.state == "canceled"
+    assert canceled.finished_at is not None
+
+    # The workflow is still readable in the canceled state.
+    fetched = workflow_bindings.WorkflowsApi.read(workflow.pulp_href)
+    assert fetched.state == "canceled"
+
+
+@pytest.mark.parallel
+def test_cancel_workflow_invalid_state_value(workflow_bindings, workflow_factory):
+    """Only 'canceled' is accepted as the target state."""
+    from datetime import datetime, timedelta, timezone
+
+    start_time = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    workflow = workflow_factory(start_time=start_time)
 
     with pytest.raises(workflow_bindings.ApiException) as exc:
-        workflow_bindings.WorkflowsApi.read(workflow.pulp_href)
-    assert exc.value.status == 404
+        workflow_bindings.WorkflowsApi.partial_update(workflow.pulp_href, {"state": "completed"})
+    assert exc.value.status == 400
 
 
 @pytest.mark.parallel
 def test_workflow_update_not_supported(workflow_bindings):
-    """Workflows are immutable; the bindings do not expose update/partial_update."""
+    """Workflows are immutable; the bindings expose only the cancel (partial_update)."""
     api = workflow_bindings.WorkflowsApi
     assert not hasattr(api, "update")
-    assert not hasattr(api, "partial_update")
 
 
 @pytest.mark.parallel

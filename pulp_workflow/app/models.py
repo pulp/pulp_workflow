@@ -49,6 +49,7 @@ class Workflow(BaseModel):
         return "Workflow: {name} [{state}]".format(name=self.name, state=self.state)
 
     class Meta:
+        default_permissions = ("add", "change", "view")
         permissions = [
             ("manage_roles_workflow", "Can manage role assignments on workflows"),
         ]
