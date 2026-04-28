@@ -1,0 +1,190 @@
+[build-system]
+requires = [
+    "setuptools >= 40.8.0",
+    "wheel >= 0.29.0",
+]
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = "pulp-workflow"
+version = "0.1.0.dev"
+description = "Pulp plugin for managing task schedules via CRUD API"
+readme = "README.md"
+license = {file = "LICENSE"}
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Framework :: Django",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+requires-python = ">=3.11"
+dependencies = [
+  "pulpcore>=3.106.0,<3.115",
+]
+
+[project.urls]
+Homepage = "https://pulpproject.org"
+Repository = "https://github.com/daviddavis/pulp_workflow"
+"Bug Tracker" = "https://github.com/daviddavis/pulp_workflow/issues"
+
+[project.entry-points."pulpcore.plugin"]
+pulp_workflow = "pulp_workflow:default_app_config"
+
+[project.entry-points."pytest11"]
+pulp_workflow = "pulp_workflow.pytest_plugin"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.towncrier]
+filename = "CHANGES.md"
+directory = "CHANGES/"
+title_format = "## {version} ({project_date}) {{: #{version} }}"
+template = "CHANGES/.TEMPLATE.md"
+issue_format = "[#{issue}](https://github.com/daviddavis/pulp_workflow/issues/{issue})"
+start_string = "[//]: # (towncrier release notes start)\n"
+underlines = ["", "", ""]
+
+    [[tool.towncrier.type]]
+        directory = "feature"
+        name = "Features"
+        showcontent = true
+
+    [[tool.towncrier.type]]
+        directory = "bugfix"
+        name = "Bugfixes"
+        showcontent = true
+
+    [[tool.towncrier.type]]
+        directory = "doc"
+        name = "Improved Documentation"
+        showcontent = true
+
+    [[tool.towncrier.type]]
+        directory = "removal"
+        name = "Removals"
+        showcontent = true
+
+    [[tool.towncrier.type]]
+        directory = "deprecation"
+        name = "Deprecations"
+        showcontent = true
+
+    [[tool.towncrier.type]]
+        directory = "misc"
+        name = "Misc"
+        showcontent = false
+
+
+[tool.black]
+line-length = 100
+target-version = ["py311", "py312", "py313"]
+exclude = '''
+/(
+    \.ci
+  | \.eggs
+  | \.git
+  | \.github
+  | \.venv
+  | _build
+  | build
+  | dist
+  | migrations
+  | docs
+)/
+'''
+
+[tool.bumpversion]
+# This section is managed by the plugin template. Do not edit manually.
+
+current_version = "0.1.0.dev"
+commit = false
+tag = false
+parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<alpha>0a)?(?P<patch>\\d+)(\\.(?P<release>[a-z]+))?"
+serialize = [
+  "{major}.{minor}.{patch}.{release}",
+  "{major}.{minor}.{patch}",
+  "{major}.{minor}.{alpha}{patch}.{release}",
+  "{major}.{minor}.{alpha}{patch}",
+]
+
+[tool.bumpversion.parts.alpha]
+# This section is managed by the plugin template. Do not edit manually.
+
+# This is sort of a hack. In PEP440 prerelease markers work quite differently.
+# But this fits best with the way we have been doing release versions.
+optional_value = "final"
+values = [
+  "0a",
+  "final",
+]
+independent = true
+
+[tool.bumpversion.parts.release]
+# This section is managed by the plugin template. Do not edit manually.
+
+optional_value = "prod"
+values = [
+  "dev",
+  "prod",
+]
+
+[[tool.bumpversion.files]]
+# This section is managed by the plugin template. Do not edit manually.
+
+filename = "./pulp_workflow/app/__init__.py"
+search = "version = \"{current_version}\""
+replace = "version = \"{new_version}\""
+
+[[tool.bumpversion.files]]
+# This section is managed by the plugin template. Do not edit manually.
+
+filename = "./pyproject.toml"
+search = "version = \"{current_version}\""
+replace = "version = \"{new_version}\""
+
+
+[tool.check-manifest]
+ignore = [
+    "CHANGES/**",
+    "doc_requirements.txt",
+    "lint_requirements.txt",
+    "docs/**",
+    ".flake8",
+    "template_config.yml",
+    ".ci/**",
+    ".github/**",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "releasing.md",
+]
+
+[tool.ruff]
+# This section is managed by the plugin template. Do not edit manually.
+line-length = 100
+extend-exclude = [
+  "docs/**",
+  "**/migrations/*.py",
+]
+
+[tool.ruff.lint]
+# This section is managed by the plugin template. Do not edit manually.
+extend-select = [
+  "I",
+  "INT",
+  "TID",
+  "T10",
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# This section is managed by the plugin template. Do not edit manually.
+"pulpcore.app".msg = "The 'pulpcore' apis must only be consumed via 'pulpcore.plugin'."
+
+[tool.ruff.lint.isort]
+# This section is managed by the plugin template. Do not edit manually.
+sections = { second-party = ["pulpcore"] }
+section-order = ["future", "standard-library", "third-party", "second-party", "first-party", "local-folder"]

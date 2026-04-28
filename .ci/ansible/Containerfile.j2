@@ -1,0 +1,51 @@
+FROM {{ image.ci_base }}
+{%- if image.webserver_snippet %}
+
+ADD ./{{ plugin_name }}/{{ plugin_name | replace("-", "_") }}/app/webserver_snippets/nginx.conf /etc/nginx/pulp/{{ plugin_name }}.conf
+{%- endif %}
+
+{%- for item in extra_files | default([]) %}
+
+ADD ./{{ item.origin }} {{ item.destination }}
+{%- endfor %}
+
+# This MUST be the ONLY call to pip install in inside the container.
+RUN pip3 install --upgrade pip setuptools wheel && \
+  rm -rf /root/.cache/pip && \
+  pip3 install {{ image.source }}
+{%- if image.upperbounds | default(false) -%}
+{{ " " }}-c ./{{ plugin_name }}/upperbounds_constraints.txt
+{%- endif -%}
+{%- if image.lowerbounds | default(false) -%}
+{{ " " }}-c ./{{ plugin_name }}/lowerbounds_constraints.txt
+{%- endif -%}
+{%- if image.ci_requirements | default(false) -%}
+{{ " " }}-r ./{{ plugin_name }}/ci_requirements.txt
+{%- endif -%}
+{{ " " }}-c ./{{ plugin_name }}/.ci/assets/ci_constraints.txt && \
+  rm -rf /root/.cache/pip
+
+{% if pulp_env is defined and pulp_env %}
+{% for key, value in pulp_env.items() %}
+ENV {{ key | upper }}={{ value }}
+{% endfor %}
+{% endif %}
+
+{% if pulp_scenario_env is defined and pulp_scenario_env %}
+{% for key, value in pulp_scenario_env.items() %}
+ENV {{ key | upper }}={{ value }}
+{% endfor %}
+{% endif %}
+
+USER pulp:pulp
+RUN PULP_STATIC_ROOT=/var/lib/operator/static/ PULP_CONTENT_ORIGIN=localhost \
+       /usr/local/bin/pulpcore-manager collectstatic --clear --noinput --link
+
+RUN mkdir /var/lib/pulp/.config
+USER root:root
+
+# Lots of plugins try to use this path, and throw warnings if they cannot access it.
+RUN mkdir /.pytest_cache
+RUN chown pulp:pulp /.pytest_cache
+
+ENTRYPOINT ["/init"]

@@ -1,0 +1,127 @@
+# Ansible playbook to start the pulp service container and its supporting services
+---
+- name: "Start CI Containers"
+  hosts: "localhost"
+  gather_facts: false
+  vars_files:
+    - "vars/main.yaml"
+  tasks:
+    - name: "Create Settings Directories"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: "directory"
+        mode: "0755"
+      loop:
+        - "settings"
+
+    - name: "Generate Pulp Settings"
+      ansible.builtin.template:
+        src: "settings.py.j2"
+        dest: "settings/settings.py"
+
+    - name: "Setup docker networking"
+      community.docker.docker_network:
+        name: "pulp_ci_bridge"
+
+    - name: "Start Service Containers"
+      community.docker.docker_container:
+        name: "{{ item.name }}"
+        image: "{{ item.image }}"
+        auto_remove: true
+        recreate: true
+        privileged: true
+        networks:
+          - name: "pulp_ci_bridge"
+            aliases: "{{ item.name }}"
+        volumes: "{{ item.volumes | default(omit) }}"
+        env: "{{ item.env | default(omit) }}"
+        command: "{{ item.command | default(omit) }}"
+        state: "started"
+      loop: "{{ services | default([]) }}"
+
+    - name: "Retrieve Docker Network Info"
+      community.docker.docker_network_info:
+        name: "pulp_ci_bridge"
+      register: "pulp_ci_bridge_info"
+
+    - name: "Update /etc/hosts"
+      ansible.builtin.lineinfile:
+        path: "/etc/hosts"
+        regexp: "\\s{{ item.value.Name }}\\s*$"
+        line: "{{ item.value.IPv4Address | ansible.utils.ipaddr('address') }}\t{{ item.value.Name }}"
+      loop: "{{ pulp_ci_bridge_info.network.Containers | dict2items }}"
+      become: true
+
+    - name: "Create Pulp Bucket"
+      amazon.aws.s3_bucket:
+        aws_access_key: "{{ minio_access_key }}"
+        aws_secret_key: "{{ minio_secret_key }}"
+        endpoint_url: "http://minio:9000"
+        region: "eu-central-1"
+        name: "pulp3"
+        state: "present"
+      when: "s3_test | default(false)"
+
+    - name: "Wait on Services"
+      block:
+        - name: "Wait for azurite"
+          ansible.builtin.uri:
+            url: "http://ci-azurite:10000/"
+            status_code:
+              - 200
+              - 400
+          when: "azure_test | default(false)"
+          retries: 2
+          delay: 5
+
+        - name: "Wait for Pulp"
+          ansible.builtin.uri:
+            url: "http://pulp{{ pulp_scenario_settings.api_root | default(pulp_settings.api_root | default('\/pulp\/', True), True) }}api/v3/status/"
+            follow_redirects: "all"
+            validate_certs: "no"
+          register: "result"
+          until: "result.status == 200"
+          retries: 12
+          delay: 5
+      rescue:
+        - name: "Output pulp container log"
+          ansible.builtin.command:
+            cmd: "docker logs pulp"
+          failed_when: true
+
+    - name: "Check version of component being tested"
+      ansible.builtin.assert:
+        that:
+          - "(result.json.versions | items2dict(key_name='component', value_name='version'))[item.app_label] | canonical_semver == (component_version | canonical_semver)"
+        fail_msg: |
+          Component {{ item.app_label }} was expected to be installed in version {{ component_version }}.
+          Instead it is reported as version {{ (result.json.versions | items2dict(key_name="component", value_name="version"))[item.app_label] }}.
+      loop: "{{ 'plugins' | ansible.builtin.extract(lookup('ansible.builtin.file', '../../template_config.yml') | from_yaml) }}"
+
+    - name: "Set pulp password in .netrc"
+      ansible.builtin.copy:
+        dest: "~/.netrc"
+        content: |
+          machine pulp
+          login admin
+          password password
+
+- name: "Prepare Pulp Application Container"
+  hosts: "pulp"
+  gather_facts: false
+  tasks:
+    - name: "Create directory for pulp-smash config"
+      ansible.builtin.file:
+        path: "/var/lib/pulp/.config/pulp_smash/"
+        state: "directory"
+        mode: "0755"
+
+    - name: "Configure pulp-smash"
+      ansible.builtin.copy:
+        src: "smash-config.json"
+        dest: "/var/lib/pulp/.config/pulp_smash/settings.json"
+
+    - name: "Set pulp admin password"
+      ansible.builtin.command:
+        cmd: "pulpcore-manager reset-admin-password --password password"
+...
