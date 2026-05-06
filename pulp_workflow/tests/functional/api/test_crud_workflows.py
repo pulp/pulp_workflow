@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -162,7 +163,10 @@ def test_workflow_update_not_supported(workflow_bindings):
 @pytest.mark.parallel
 def test_task_args_and_kwargs_not_exposed(workflow_bindings, workflow_factory):
     """Arg ``value`` fields are write-only and never returned in responses."""
+    # Schedule far in the future so the dummy args never actually dispatch.
+    start_time = datetime.now(timezone.utc) + timedelta(days=365)
     workflow = workflow_factory(
+        start_time=start_time.isoformat(),
         tasks=[
             {
                 "index": 0,

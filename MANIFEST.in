@@ -1,4 +1,5 @@
 include README.md
+include CHANGES.md
 include functest_requirements.txt
 include unittest_requirements.txt
 recursive-include pulp_workflow *.py
