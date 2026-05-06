@@ -4,7 +4,7 @@ from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, status
 from rest_framework.response import Response
 
-from pulpcore.constants import TASK_STATES
+from pulpcore.plugin.constants import TASK_STATES
 from pulpcore.plugin.models import TaskSchedule
 from pulpcore.plugin.viewsets import NamedModelViewSet, RolesMixin
 

@@ -4,7 +4,7 @@ import traceback
 from django.db import transaction
 from django.utils import timezone
 
-from pulpcore.constants import TASK_STATES
+from pulpcore.plugin.constants import TASK_STATES
 from pulpcore.plugin.tasking import dispatch
 
 from pulp_workflow.app.models import Workflow, WorkflowTask
