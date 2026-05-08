@@ -25,6 +25,10 @@ def workflow_bindings(_api_client_set, bindings_cfg):
 def workflow_factory(workflow_bindings):
     """A factory to generate a Workflow.
 
+    The default workflow runs ``orphan_cleanup`` with a very large
+    ``orphan_protection_time`` so it is effectively a no-op and does not race
+    with content created by other tests in the same session.
+
     Best-effort cleanup attempts to cancel the workflow at teardown; canceling only
     succeeds while the workflow is still in the ``waiting`` state, so workflows that
     have started executing are simply left in their final state.
@@ -39,6 +43,11 @@ def workflow_factory(workflow_bindings):
             [
                 {
                     "task_name": "pulpcore.app.tasks.orphan_cleanup",
+                    "task_kwargs": [
+                        # Effectively never delete anything: orphan must be
+                        # older than ~1 year before it is eligible.
+                        {"kwarg_key": "orphan_protection_time", "value": 525600},
+                    ],
                 },
             ],
         )
