@@ -49,11 +49,18 @@ def execute_workflow(workflow_pk, next_index=0):
             workflow.state = TASK_STATES.RUNNING
             workflow.started_at = timezone.now()
             workflow.save(update_fields=["state", "started_at", "pulp_last_updated"])
+        _log.info("Workflow %s started.", workflow.name)
         prev_task = None
     else:
         # Continuation: inspect the previous step's child task.
         prev_wf_task = workflow.tasks.get(index=next_index - 1)
         prev_task = prev_wf_task.dispatched_task
+        _log.debug(
+            "Workflow %s step %d previous task ended in state %r.",
+            workflow.name,
+            next_index - 1,
+            prev_task.state,
+        )
         if prev_task.state != TASK_STATES.COMPLETED:
             _fail_workflow(
                 workflow,
@@ -71,6 +78,7 @@ def execute_workflow(workflow_pk, next_index=0):
         workflow.state = TASK_STATES.COMPLETED
         workflow.finished_at = timezone.now()
         workflow.save(update_fields=["state", "finished_at", "current_task", "pulp_last_updated"])
+        _log.info("Workflow %s completed.", workflow.name)
         return
 
     workflow.current_task = wf_task
@@ -81,6 +89,12 @@ def execute_workflow(workflow_pk, next_index=0):
     resource = _workflow_resource(workflow_pk)
     try:
         resolved_args, resolved_kwargs = wf_task.materialize(prev_task)
+        _log.debug(
+            "Workflow %s dispatching step %d (%s).",
+            workflow.name,
+            next_index,
+            wf_task.task_name,
+        )
         child = dispatch(
             wf_task.task_name,
             args=resolved_args,
@@ -101,6 +115,7 @@ def execute_workflow(workflow_pk, next_index=0):
         kwargs={"workflow_pk": str(workflow_pk), "next_index": next_index + 1},
         exclusive_resources=[resource],
     )
+    _log.debug("Workflow %s scheduled continuation for step %d.", workflow.name, next_index + 1)
 
 
 def _fail_workflow(workflow, wf_task, exc=None, description=None, child_error=None):
@@ -117,3 +132,6 @@ def _fail_workflow(workflow, wf_task, exc=None, description=None, child_error=No
     if child_error is not None:
         workflow.error["child_error"] = child_error
     workflow.save(update_fields=["state", "finished_at", "error", "pulp_last_updated"])
+    _log.info(
+        "Workflow %s failed at step %d (%s).", workflow.name, wf_task.index, wf_task.task_name
+    )
