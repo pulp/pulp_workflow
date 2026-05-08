@@ -2,8 +2,12 @@
 
 > **Warning:** This is a community plugin and is not officially supported. Scheduling tasks incorrectly can cause serious issues in your Pulp instance. Always test in a development environment first before applying changes to production.
 
-A Pulp plugin that introduces `Workflow` — a named, ordered pipeline of tasks
-dispatched sequentially.
+A Pulp plugin that introduces the `Workflow` model. Workflows build on top of
+tasks in Pulp allowing users to:
+* Schedule tasks to run at any given time
+* Run sequences of tasks in a specific order
+* Set up callback services to run on workflow lifecycle events (e.g. running,
+completed, failed, canceled, finished)
 
 A `Workflow` owns one or more `WorkflowTask` rows. Each task records the
 `task_name`, `task_args`, `task_kwargs`, and any `reserved_resources` to use
@@ -14,10 +18,10 @@ workflow, cancel it (if it has not yet started) and create a new one.
 
 | Method | URL | Description |
 |--------|-----|-------------|
-| GET | `/pulp/api/v3/workflows/` | List workflows |
-| POST | `/pulp/api/v3/workflows/` | Create a workflow (with tasks) |
-| GET | `/pulp/api/v3/workflows/<pk>/` | Retrieve a workflow |
-| PATCH | `/pulp/api/v3/workflows/<pk>/` | Cancel a waiting workflow (body: `{"state": "canceled"}`). Returns 409 if the workflow has already started; only `"canceled"` is accepted as the target state. |
+| GET | `/pulp/api/v3/workflow/workflows/` | List workflows |
+| POST | `/pulp/api/v3/workflow/workflows/` | Create a workflow (with tasks) |
+| GET | `/pulp/api/v3/workflow/workflows/<pk>/` | Retrieve a workflow |
+| PATCH | `/pulp/api/v3/workflow/workflows/<pk>/` | Cancel a waiting workflow (body: `{"state": "canceled"}`). Returns 409 if the workflow has already started; only `"canceled"` is accepted as the target state. |
 
 ## How execution works
 

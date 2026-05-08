@@ -1,6 +1,7 @@
 from gettext import gettext as _
 
 from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
@@ -8,6 +9,7 @@ from rest_framework.validators import UniqueValidator
 from pulpcore.plugin.constants import TASK_CHOICES, TASK_STATES
 from pulpcore.plugin.models import TaskGroup, TaskSchedule
 from pulpcore.plugin.serializers import (
+    DomainUniqueValidator,
     IdentityField,
     ModelSerializer,
     RelatedField,
@@ -15,7 +17,10 @@ from pulpcore.plugin.serializers import (
 )
 
 from pulp_workflow.app.models import (
+    CALLBACK_TYPE_CHOICES,
+    CallbackService,
     Workflow,
+    WorkflowCallback,
     WorkflowTask,
     WorkflowTaskArg,
     WorkflowTaskKwarg,
@@ -163,10 +168,52 @@ class WorkflowTaskSerializer(serializers.ModelSerializer):
         return value
 
 
+class CallbackServiceRelatedField(RelatedField):
+    """A hyperlinked relation to a ``CallbackService`` by its detail URL or PRN."""
+
+    view_name = "workflow-callback-services-detail"
+
+    # ``queryset`` is set in ``__init__`` rather than as a class attribute so importing this module
+    # does not require Django app loading to be far enough along for ``CallbackService.objects`` to
+    # resolve.
+    def __init__(self, **kwargs):
+        kwargs.setdefault("queryset", CallbackService.objects.all())
+        super().__init__(**kwargs)
+
+
+class WorkflowCallbackSerializer(serializers.ModelSerializer):
+    """A ``WorkflowCallback`` nested under a ``Workflow``.
+
+    On create, ``callback_service`` and ``callback_type`` are required; ``dispatched_task`` is
+    read-only and is populated by ``execute_workflow`` when the corresponding lifecycle event
+    fires.
+    """
+
+    callback_service = CallbackServiceRelatedField(
+        help_text=_("Href of the CallbackService to invoke."),
+    )
+    callback_type = serializers.ChoiceField(
+        choices=CALLBACK_TYPE_CHOICES,
+        help_text=_(
+            "The workflow lifecycle event that triggers this callback. The 'finished' "
+            "type fires on any terminal state (completed, failed, canceled)."
+        ),
+    )
+    dispatched_task = RelatedField(
+        view_name="tasks-detail",
+        read_only=True,
+        help_text=_("Href of the most recently dispatched callback task, if any."),
+    )
+
+    class Meta:
+        model = WorkflowCallback
+        fields = ("callback_service", "callback_type", "dispatched_task")
+
+
 class WorkflowSerializer(ModelSerializer):
     """Serializer for Workflow with nested tasks."""
 
-    pulp_href = IdentityField(view_name="workflows-detail")
+    pulp_href = IdentityField(view_name="workflow-workflows-detail")
     name = serializers.CharField(
         help_text=_("The name of the workflow."),
         allow_blank=False,
@@ -227,6 +274,11 @@ class WorkflowSerializer(ModelSerializer):
         allow_empty=False,
         help_text=_("The ordered tasks that make up this workflow."),
     )
+    callbacks = WorkflowCallbackSerializer(
+        many=True,
+        required=False,
+        help_text=_("User-registered callbacks that fire on this workflow's lifecycle events."),
+    )
 
     class Meta:
         model = Workflow
@@ -241,7 +293,21 @@ class WorkflowSerializer(ModelSerializer):
             "current_task",
             "task_group",
             "tasks",
+            "callbacks",
         )
+
+    def validate_callbacks(self, value):
+        seen = set()
+        for row in value:
+            key = (row["callback_service"].pk, row["callback_type"])
+            if key in seen:
+                raise serializers.ValidationError(
+                    _("Duplicate (callback_service, callback_type): ({s!r}, {t!r}).").format(
+                        s=row["callback_service"].name, t=row["callback_type"]
+                    )
+                )
+            seen.add(key)
+        return value
 
     def validate_tasks(self, value):
         # Dynamic args reference the previous task's created resources, so the first task
@@ -257,6 +323,7 @@ class WorkflowSerializer(ModelSerializer):
     @transaction.atomic
     def create(self, validated_data):
         tasks_data = validated_data.pop("tasks")
+        callbacks_data = validated_data.pop("callbacks", [])
         workflow = Workflow.objects.create(**validated_data)
         workflow.task_group = TaskGroup.objects.create(
             description=f"Workflow: {workflow.name}",
@@ -274,6 +341,9 @@ class WorkflowSerializer(ModelSerializer):
             WorkflowTaskKwarg.objects.bulk_create(
                 WorkflowTaskKwarg(workflow_task=wf_task, **row) for row in task_kwargs
             )
+        WorkflowCallback.objects.bulk_create(
+            WorkflowCallback(workflow=workflow, **row) for row in callbacks_data
+        )
 
         # Schedule a one-shot dispatch of execute_workflow at start_time.
         # dispatch_interval=None makes pulpcore's scheduler fire it once and stop.
@@ -298,3 +368,36 @@ class WorkflowCancelSerializer(serializers.Serializer):
 
     class Meta:
         fields = ("state",)
+
+
+class CallbackServiceSerializer(ModelSerializer):
+    """Serializer for ``CallbackService``."""
+
+    pulp_href = IdentityField(view_name="workflow-callback-services-detail")
+    name = serializers.CharField(
+        help_text=_("A name for this callback service. Unique within a domain."),
+        validators=[DomainUniqueValidator(queryset=CallbackService.objects.all())],
+    )
+    script = serializers.CharField(
+        help_text=_(
+            "An absolute path on the Pulp worker host to an executable script that is "
+            "invoked when an attached workflow reaches the registered callback type. "
+            "Workflow context is exposed via PULP_WORKFLOW_* environment variables; the "
+            "exact subset is controlled by the ``WORKFLOW_CALLBACK_FIELDS`` server setting "
+            "(defaults to PULP_WORKFLOW_NAME and PULP_WORKFLOW_STATE). PULP_WORKFLOW_PK, "
+            "PULP_WORKFLOW_LABELS, and PULP_WORKFLOW_LABEL_<KEY> may also be exposed."
+        ),
+    )
+
+    def validate_script(self, value):
+        # Run the same checks that ``CallbackService.validate`` enforces on save, but raise a DRF
+        # ``ValidationError`` so the API returns 400 rather than 500 for misconfigured input.
+        try:
+            CallbackService(script=value).validate()
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages)
+        return value
+
+    class Meta:
+        model = CallbackService
+        fields = ModelSerializer.Meta.fields + ("name", "script")

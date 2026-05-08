@@ -7,27 +7,9 @@ The workflow has two tasks:
        the unique ``RepositoryVersion`` created by task 0.
 """
 
-import time
 import uuid
 
-WORKFLOW_TIMEOUT_SECONDS = 300
-POLL_INTERVAL_SECONDS = 2.0
-
-
-def _pk_from_href(href):
-    return href.rstrip("/").split("/")[-1]
-
-
-def _wait_for_workflow(api, workflow_href, timeout=WORKFLOW_TIMEOUT_SECONDS):
-    """Poll a Workflow until it reaches a final state."""
-    final_states = {"completed", "failed", "canceled", "skipped"}
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        workflow = api.read(workflow_href)
-        if workflow.state in final_states:
-            return workflow
-        time.sleep(POLL_INTERVAL_SECONDS)
-    raise AssertionError(f"Workflow {workflow_href} did not finish within {timeout}s")
+from pulpcore.plugin.util import extract_pk
 
 
 def test_execute_workflow_add_content_and_publish(
@@ -37,6 +19,7 @@ def test_execute_workflow_add_content_and_publish(
     file_repo,
     file_content_unit_with_name_factory,
     workflow_factory,
+    monitor_workflow,
 ):
     """A Workflow that adds content then publishes the new version end-to-end."""
     repo = file_repo
@@ -49,11 +32,11 @@ def test_execute_workflow_add_content_and_publish(
                 "task_kwargs": [
                     {
                         "kwarg_key": "repository_pk",
-                        "value": _pk_from_href(repo.pulp_href),
+                        "value": extract_pk(repo.pulp_href),
                     },
                     {
                         "kwarg_key": "add_content_units",
-                        "value": [_pk_from_href(content_a.pulp_href)],
+                        "value": [extract_pk(content_a.pulp_href)],
                     },
                     {"kwarg_key": "remove_content_units", "value": []},
                 ],
@@ -75,12 +58,9 @@ def test_execute_workflow_add_content_and_publish(
         ],
     )
 
-    finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
+    finished = monitor_workflow(workflow.pulp_href)
 
     # ---- Workflow-level assertions.
-    assert finished.state == "completed", (
-        f"Workflow state={finished.state!r} error={finished.error!r}"
-    )
     assert finished.error is None
     assert finished.started_at is not None
     assert finished.finished_at is not None
