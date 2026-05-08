@@ -6,10 +6,38 @@ from rest_framework.response import Response
 
 from pulpcore.plugin.constants import TASK_STATES
 from pulpcore.plugin.models import TaskSchedule
-from pulpcore.plugin.viewsets import NamedModelViewSet, RolesMixin
+from pulpcore.plugin.viewsets import (
+    NAME_FILTER_OPTIONS,
+    BaseFilterSet,
+    NamedModelViewSet,
+    RolesMixin,
+)
 
 from pulp_workflow.app.models import Workflow
 from pulp_workflow.app.serializers import WorkflowCancelSerializer, WorkflowSerializer
+
+# Mirrors ``pulpcore.app.viewsets.base.DATETIME_FILTER_OPTIONS``, which is not
+# re-exported through ``pulpcore.plugin``.
+_DATETIME_FILTER_OPTIONS = ["exact", "lt", "lte", "gt", "gte", "range", "isnull"]
+
+
+class WorkflowFilter(BaseFilterSet):
+    """Filter for Workflows.
+
+    ``BaseFilterSet`` contributes ``pulp_href``/``pulp_href__in``, ``pulp_id__in``,
+    ``prn__in``, and the ``q`` expression filter automatically.
+    """
+
+    class Meta:
+        model = Workflow
+        fields = {
+            "name": NAME_FILTER_OPTIONS,
+            "state": ["exact", "in", "ne"],
+            "pulp_created": _DATETIME_FILTER_OPTIONS,
+            "start_time": _DATETIME_FILTER_OPTIONS,
+            "started_at": _DATETIME_FILTER_OPTIONS,
+            "finished_at": _DATETIME_FILTER_OPTIONS,
+        }
 
 
 class WorkflowViewSet(
@@ -29,11 +57,8 @@ class WorkflowViewSet(
     queryset = Workflow.objects.all().prefetch_related("tasks")
     endpoint_name = "workflows"
     serializer_class = WorkflowSerializer
+    filterset_class = WorkflowFilter
     ordering = "-pulp_created"
-    filterset_fields = {
-        "name": ["exact", "contains"],
-        "state": ["exact", "in"],
-    }
     queryset_filtering_required_permission = "workflow.view_workflow"
 
     DEFAULT_ACCESS_POLICY = {

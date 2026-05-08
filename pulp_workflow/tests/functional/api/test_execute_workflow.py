@@ -3,8 +3,8 @@
 The workflow has two tasks:
     0. Add ``content_a`` to a file repository (creates repository version 1).
     1. Publish that repository version. The ``repository_version_pk`` kwarg is
-       a dynamic arg that resolves at dispatch time to the unique
-       ``RepositoryVersion`` created by task 0.
+       a dynamic arg (``content_type`` set) that resolves at dispatch time to
+       the unique ``RepositoryVersion`` created by task 0.
 """
 
 import time
@@ -45,7 +45,6 @@ def test_execute_workflow_add_content_and_publish(
     workflow = workflow_factory(
         tasks=[
             {
-                "index": 0,
                 "task_name": "pulpcore.app.tasks.repository.add_and_remove",
                 "task_kwargs": [
                     {
@@ -61,14 +60,12 @@ def test_execute_workflow_add_content_and_publish(
                 "reserved_resources": [repo.pulp_href],
             },
             {
-                "index": 1,
                 "task_name": "pulp_file.app.tasks.publish",
                 "task_kwargs": [
                     {"kwarg_key": "manifest", "value": "PULP_MANIFEST"},
                     # Resolved at dispatch time to the pk of the RepositoryVersion
                     # created by task 0.
                     {
-                        "dynamic": True,
                         "kwarg_key": "repository_version_pk",
                         "content_type": "core.repositoryversion",
                     },
