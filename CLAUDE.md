@@ -63,6 +63,20 @@ When patchback fails to cherry-pick a PR into an older branch, you need to manua
 - When creating a PR include `[<version>]` in the PR title (e.g. `[3.49] Update pyopenssl requirement from <26.0 to <27.0`).
 - Use `git cherry-pick -x`.
 
+## Changelog fragments
+
+Changelog fragments live in `CHANGES/` and are rendered by towncrier into
+`CHANGES.md`. The fragments **must be valid markdown** (not RST), since the
+project's changelog is markdown:
+
+- Use single backticks for inline code (`` `Workflow` ``), not RST-style
+  double backticks (`` ``Workflow`` ``).
+- Other markdown constructs (lists, links, fenced code blocks, etc.) are fine.
+- The fragment filename follows `<name>.<type>` (e.g. `+my_change.feature`,
+  `+my_change.bugfix`); do **not** add a `.md` extension. The `<type>`
+  segment must match a towncrier type configured in `pyproject.toml`
+  (`feature`, `bugfix`, `doc`, `removal`, `deprecation`, `misc`).
+
 ## Contributing
 
 When preparing to commit and create a PR you **must** follow our [PR checklist](https://pulpproject.org/pulpcore/docs/dev/guides/pull-request-walkthrough/) Important to note is the AI attribution requirement in our commit messages. Also, note that our changelog entries are markdown.

@@ -63,7 +63,6 @@ class Migration(migrations.Migration):
                 ('pulp_id', models.UUIDField(default=pulpcore.app.models.base.pulp_uuid, editable=False, primary_key=True, serialize=False)),
                 ('pulp_created', models.DateTimeField(auto_now_add=True)),
                 ('pulp_last_updated', models.DateTimeField(auto_now=True, null=True)),
-                ('dynamic', models.BooleanField(default=False)),
                 ('value', pulpcore.app.models.fields.EncryptedJSONField(null=True)),
                 ('arg_index', models.PositiveIntegerField()),
                 ('content_type', models.ForeignKey(null=True, on_delete=django.db.models.deletion.PROTECT, to='contenttypes.contenttype')),
@@ -81,7 +80,6 @@ class Migration(migrations.Migration):
                 ('pulp_id', models.UUIDField(default=pulpcore.app.models.base.pulp_uuid, editable=False, primary_key=True, serialize=False)),
                 ('pulp_created', models.DateTimeField(auto_now_add=True)),
                 ('pulp_last_updated', models.DateTimeField(auto_now=True, null=True)),
-                ('dynamic', models.BooleanField(default=False)),
                 ('value', pulpcore.app.models.fields.EncryptedJSONField(null=True)),
                 ('kwarg_key', models.TextField()),
                 ('content_type', models.ForeignKey(null=True, on_delete=django.db.models.deletion.PROTECT, to='contenttypes.contenttype')),
@@ -92,28 +90,6 @@ class Migration(migrations.Migration):
             },
             bases=(django_lifecycle.mixins.LifecycleModelMixin, models.Model),
         ),
-        migrations.AddConstraint(
-            model_name='workflowtaskarg',
-            constraint=models.CheckConstraint(
-                condition=models.Q(
-                    models.Q(('content_type__isnull', False), ('dynamic', True)),
-                    models.Q(('content_type__isnull', True), ('dynamic', False)),
-                    _connector='OR',
-                ),
-                name='workflowtaskarg_dynamic_iff_ctype',
-            ),
-        ),
-        migrations.AddConstraint(
-            model_name='workflowtaskkwarg',
-            constraint=models.CheckConstraint(
-                condition=models.Q(
-                    models.Q(('content_type__isnull', False), ('dynamic', True)),
-                    models.Q(('content_type__isnull', True), ('dynamic', False)),
-                    _connector='OR',
-                ),
-                name='workflowtaskkwarg_dynamic_iff_ctype',
-            ),
-        ),
         migrations.AddField(
             model_name='workflow',
             name='current_task',
@@ -123,5 +99,13 @@ class Migration(migrations.Migration):
             model_name='workflow',
             name='pulp_domain',
             field=models.ForeignKey(default=pulpcore.app.util.get_domain_pk, on_delete=django.db.models.deletion.CASCADE, to='core.domain'),
+        ),
+        migrations.AddConstraint(
+            model_name='workflowtaskarg',
+            constraint=models.CheckConstraint(condition=models.Q(('content_type__isnull', True), ('value__isnull', True), _connector='OR'), name='workflowtaskarg_value_ctype_exclusive'),
+        ),
+        migrations.AddConstraint(
+            model_name='workflowtaskkwarg',
+            constraint=models.CheckConstraint(condition=models.Q(('content_type__isnull', True), ('value__isnull', True), _connector='OR'), name='workflowtaskkwarg_value_ctype_exclusive'),
         ),
     ]
