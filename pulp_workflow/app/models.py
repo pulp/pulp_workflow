@@ -1,6 +1,5 @@
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
-from django.db.models import CheckConstraint, Q
 from django.utils import timezone
 
 # EncryptedJSONField is not yet re-exported through pulpcore.plugin; mirror
@@ -80,9 +79,10 @@ class WorkflowTask(BaseModel):
     def materialize(self, prev_task):
         """Return ``(args, kwargs)`` for dispatching this task.
 
-        Dynamic rows are resolved against ``prev_task``'s ``created_resources``
-        by ``content_type``. Positional ``arg_index`` values must be contiguous
-        from 0 (enforced at write time by the serializer).
+        Dynamic rows (those with a ``content_type`` set) are resolved against
+        ``prev_task``'s ``created_resources`` by ``content_type``. Positional
+        ``arg_index`` values are assigned at write time from the order of the
+        ``task_args`` list and are contiguous from 0.
         """
         positional = self.task_args.select_related("content_type")
         keyword = self.task_kwargs.select_related("content_type")
@@ -98,12 +98,11 @@ class WorkflowTask(BaseModel):
 class _WorkflowTaskArgBase(BaseModel):
     """Abstract base for a positional or keyword arg of a ``WorkflowTask``.
 
-    A row is either *static* (``dynamic=False``; pass ``value`` through) or
-    *dynamic* (``dynamic=True``; resolve to the pk of the previous task's
-    unique created resource of type ``content_type``).
+    A row is either *static* (``content_type`` is null; pass ``value`` through)
+    or *dynamic* (``content_type`` is set; resolve to the pk of the previous
+    task's unique created resource of that type).
     """
 
-    dynamic = models.BooleanField(default=False)
     value = EncryptedJSONField(null=True)
     content_type = models.ForeignKey(
         "contenttypes.ContentType",
@@ -113,18 +112,9 @@ class _WorkflowTaskArgBase(BaseModel):
 
     class Meta:
         abstract = True
-        constraints = [
-            CheckConstraint(
-                condition=(
-                    Q(dynamic=True, content_type__isnull=False)
-                    | Q(dynamic=False, content_type__isnull=True)
-                ),
-                name="%(class)s_dynamic_iff_ctype",
-            ),
-        ]
 
     def resolve(self, prev_task):
-        if not self.dynamic:
+        if self.content_type_id is None:
             return self.value
         if prev_task is None:
             raise ValueError("Dynamic workflow arg used in task 0; no previous task exists.")

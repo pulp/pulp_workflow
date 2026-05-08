@@ -12,12 +12,10 @@ def test_create_workflow(workflow_bindings, workflow_factory):
         name=name,
         tasks=[
             {
-                "index": 0,
                 "task_name": "pulpcore.app.tasks.orphan_cleanup",
                 "task_kwargs": [{"kwarg_key": "orphan_protection_time", "value": 0}],
             },
             {
-                "index": 1,
                 "task_name": "pulpcore.app.tasks.orphan_cleanup",
             },
         ],
@@ -54,22 +52,6 @@ def test_create_workflow_no_tasks_fails(workflow_bindings):
 
 
 @pytest.mark.parallel
-def test_create_workflow_duplicate_task_index_fails(workflow_bindings):
-    """Task indexes must be unique within a workflow."""
-    with pytest.raises(workflow_bindings.ApiException) as exc:
-        workflow_bindings.WorkflowsApi.create(
-            {
-                "name": str(uuid.uuid4()),
-                "tasks": [
-                    {"index": 0, "task_name": "pulpcore.app.tasks.orphan_cleanup"},
-                    {"index": 0, "task_name": "pulpcore.app.tasks.orphan_cleanup"},
-                ],
-            }
-        )
-    assert exc.value.status == 400
-
-
-@pytest.mark.parallel
 def test_create_duplicate_workflow_name_fails(workflow_bindings, workflow_factory):
     """Creating a workflow with a name already in use fails."""
     name = str(uuid.uuid4())
@@ -80,7 +62,7 @@ def test_create_duplicate_workflow_name_fails(workflow_bindings, workflow_factor
             {
                 "name": name,
                 "tasks": [
-                    {"index": 0, "task_name": "pulpcore.app.tasks.orphan_cleanup"},
+                    {"task_name": "pulpcore.app.tasks.orphan_cleanup"},
                 ],
             }
         )
@@ -109,6 +91,26 @@ def test_list_workflows(workflow_bindings, workflow_factory):
 
     results = workflow_bindings.WorkflowsApi.list(state="waiting")
     assert results.count >= 1
+
+
+@pytest.mark.parallel
+def test_list_workflows_extra_filters(workflow_bindings, workflow_factory):
+    """The new filters from BaseFilterSet (pulp_href__in, name__contains, q) work."""
+    prefix = f"filt-{uuid.uuid4().hex[:8]}"
+    a = workflow_factory(name=f"{prefix}-a")
+    b = workflow_factory(name=f"{prefix}-b")
+
+    # name__contains
+    results = workflow_bindings.WorkflowsApi.list(name__contains=prefix)
+    assert {w.name for w in results.results} == {a.name, b.name}
+
+    # pulp_href__in
+    results = workflow_bindings.WorkflowsApi.list(pulp_href__in=[a.pulp_href])
+    assert [w.pulp_href for w in results.results] == [a.pulp_href]
+
+    # q expression filter (provided by BaseFilterSet)
+    results = workflow_bindings.WorkflowsApi.list(q=f"name__contains={prefix} AND state=waiting")
+    assert {w.name for w in results.results} == {a.name, b.name}
 
 
 @pytest.mark.parallel
@@ -142,15 +144,20 @@ def test_cancel_workflow(workflow_bindings, workflow_factory):
 
 @pytest.mark.parallel
 def test_cancel_workflow_invalid_state_value(workflow_bindings, workflow_factory):
-    """Only 'canceled' is accepted as the target state."""
+    """Only 'canceled' is accepted as the target state.
+
+    The cancel body's ``state`` is a single-choice enum, so the bindings reject any
+    other value client-side via pydantic validation before the request is sent.
+    """
     from datetime import datetime, timedelta, timezone
+
+    from pydantic import ValidationError
 
     start_time = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     workflow = workflow_factory(start_time=start_time)
 
-    with pytest.raises(workflow_bindings.ApiException) as exc:
+    with pytest.raises(ValidationError):
         workflow_bindings.WorkflowsApi.workflows_cancel(workflow.pulp_href, {"state": "completed"})
-    assert exc.value.status == 400
 
 
 @pytest.mark.parallel
@@ -169,9 +176,8 @@ def test_task_args_and_kwargs_not_exposed(workflow_bindings, workflow_factory):
         start_time=start_time.isoformat(),
         tasks=[
             {
-                "index": 0,
                 "task_name": "pulpcore.app.tasks.orphan_cleanup",
-                "task_args": [{"arg_index": 0, "value": "secret-positional"}],
+                "task_args": [{"value": "secret-positional"}],
                 "task_kwargs": [{"kwarg_key": "secret_keyword", "value": "s3cr3t"}],
             },
         ],

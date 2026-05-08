@@ -38,7 +38,6 @@ def workflow_factory(workflow_bindings):
             "tasks",
             [
                 {
-                    "index": 0,
                     "task_name": "pulpcore.app.tasks.orphan_cleanup",
                 },
             ],

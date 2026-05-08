@@ -1,0 +1,6 @@
+Simplified the Workflow API by removing redundant fields. ``WorkflowTask.index``
+and ``WorkflowTaskArg.arg_index`` are now read-only and assigned from list
+position. The ``dynamic`` flag on ``WorkflowTaskArg``/``WorkflowTaskKwarg`` has
+been dropped; presence of ``content_type`` now determines whether a row is
+dynamically resolved. ``Workflow.current_task`` is now the href of the
+dispatched pulpcore Task instead of an integer index.
