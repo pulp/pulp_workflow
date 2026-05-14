@@ -2,11 +2,8 @@ from django.contrib.postgres.fields import ArrayField, HStoreField
 from django.db import models
 from django.utils import timezone
 
-# EncryptedJSONField is not yet re-exported through pulpcore.plugin; mirror
-# pulpcore's own usage on Task.enc_args / TaskSchedule.task_args.
-from pulpcore.app.models.fields import EncryptedJSONField  # noqa: TID251 - not in pulpcore.plugin
 from pulpcore.plugin.constants import TASK_CHOICES, TASK_STATES
-from pulpcore.plugin.models import BaseModel
+from pulpcore.plugin.models import BaseModel, EncryptedJSONField
 from pulpcore.plugin.util import get_domain_pk
 
 
