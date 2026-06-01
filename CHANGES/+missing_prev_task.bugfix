@@ -1,0 +1,4 @@
+Fixed an `AttributeError` in `execute_workflow` when a previous step's
+dispatched `core.Task` had been deleted between dispatch and the
+continuation (e.g. by `orphan_cleanup`). The workflow is now transitioned
+to `failed` with a clear description in that case.

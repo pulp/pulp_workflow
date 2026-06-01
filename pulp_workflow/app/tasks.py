@@ -55,6 +55,16 @@ def execute_workflow(workflow_pk, next_index=0):
         # Continuation: inspect the previous step's child task.
         prev_wf_task = workflow.tasks.get(index=next_index - 1)
         prev_task = prev_wf_task.dispatched_task
+        if prev_task is None:
+            # ``WorkflowTask.dispatched_task`` is nullable with on_delete=SET_NULL,
+            # so the previously-dispatched ``core.Task`` may have been deleted
+            # (e.g. by orphan_cleanup) between dispatch and this continuation.
+            _fail_workflow(
+                workflow,
+                prev_wf_task,
+                description="Previously dispatched task no longer exists.",
+            )
+            return
         _log.debug(
             "Workflow %s step %d previous task ended in state %r.",
             workflow.name,
