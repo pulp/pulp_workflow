@@ -8,15 +8,19 @@ import pytest
 def test_create_workflow(workflow_bindings, workflow_factory):
     """Test creating a Workflow with multiple tasks."""
     name = str(uuid.uuid4())
+    # Use a very large orphan_protection_time so that, if these tasks actually
+    # execute, they don't race with content created by other tests.
+    safe_kwargs = [{"kwarg_key": "orphan_protection_time", "value": 525600}]
     workflow = workflow_factory(
         name=name,
         tasks=[
             {
                 "task_name": "pulpcore.app.tasks.orphan_cleanup",
-                "task_kwargs": [{"kwarg_key": "orphan_protection_time", "value": 0}],
+                "task_kwargs": safe_kwargs,
             },
             {
                 "task_name": "pulpcore.app.tasks.orphan_cleanup",
+                "task_kwargs": safe_kwargs,
             },
         ],
     )
