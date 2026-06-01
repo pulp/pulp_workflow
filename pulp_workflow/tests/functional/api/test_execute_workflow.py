@@ -88,6 +88,18 @@ def test_execute_workflow_add_content_and_publish(
     assert finished.current_task is None
     assert len(finished.tasks) == 2
 
+    # ---- TaskGroup membership and dispatched state.
+    assert finished.task_group is not None
+    task_group = pulpcore_bindings.TaskGroupsApi.read(finished.task_group)
+    assert task_group.all_tasks_dispatched is True
+    group_task_hrefs = {t.pulp_href for t in task_group.tasks}
+    # Every child task is in the group.
+    assert finished.tasks[0].dispatched_task in group_task_hrefs
+    assert finished.tasks[1].dispatched_task in group_task_hrefs
+    # The execute_workflow continuations are also in the group: 1 per step + 1 final.
+    # (2 child tasks + at least 2 execute_workflow continuations.)
+    assert len(group_task_hrefs) >= 4
+
     task0, task1 = finished.tasks[0], finished.tasks[1]
     assert task0.dispatched_task is not None
     assert task1.dispatched_task is not None

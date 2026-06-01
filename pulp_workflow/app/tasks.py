@@ -88,6 +88,7 @@ def execute_workflow(workflow_pk, next_index=0):
         workflow.state = TASK_STATES.COMPLETED
         workflow.finished_at = timezone.now()
         workflow.save(update_fields=["state", "finished_at", "current_task", "pulp_last_updated"])
+        _mark_task_group_dispatched(workflow)
         _log.info("Workflow %s completed.", workflow.name)
         return
 
@@ -111,6 +112,7 @@ def execute_workflow(workflow_pk, next_index=0):
             kwargs=resolved_kwargs,
             exclusive_resources=wf_task.reserved_resources or None,
             shared_resources=[resource],
+            task_group=workflow.task_group,
         )
     except Exception as exc:
         _log.exception("Workflow %s failed dispatching task %s", workflow.name, wf_task.index)
@@ -124,6 +126,7 @@ def execute_workflow(workflow_pk, next_index=0):
         execute_workflow,
         kwargs={"workflow_pk": str(workflow_pk), "next_index": next_index + 1},
         exclusive_resources=[resource],
+        task_group=workflow.task_group,
     )
     _log.debug("Workflow %s scheduled continuation for step %d.", workflow.name, next_index + 1)
 
@@ -142,6 +145,15 @@ def _fail_workflow(workflow, wf_task, exc=None, description=None, child_error=No
     if child_error is not None:
         workflow.error["child_error"] = child_error
     workflow.save(update_fields=["state", "finished_at", "error", "pulp_last_updated"])
+    _mark_task_group_dispatched(workflow)
     _log.info(
         "Workflow %s failed at step %d (%s).", workflow.name, wf_task.index, wf_task.task_name
     )
+
+
+def _mark_task_group_dispatched(workflow):
+    group = workflow.task_group
+    if group is None or group.all_tasks_dispatched:
+        return
+    group.all_tasks_dispatched = True
+    group.save(update_fields=["all_tasks_dispatched", "pulp_last_updated"])

@@ -58,7 +58,11 @@ class WorkflowViewSet(
     change a workflow, cancel it (if it has not yet started) and create a new one.
     """
 
-    queryset = Workflow.objects.all().prefetch_related("tasks")
+    queryset = (
+        Workflow.objects.all()
+        .select_related("task_group", "current_task__dispatched_task")
+        .prefetch_related("tasks")
+    )
     endpoint_name = "workflows"
     serializer_class = WorkflowSerializer
     filterset_class = WorkflowFilter
@@ -126,6 +130,11 @@ class WorkflowViewSet(
                 workflow.finished_at = timezone.now()
                 workflow.save(update_fields=["state", "finished_at", "pulp_last_updated"])
                 TaskSchedule.objects.filter(name=f"pulp_workflow.workflow:{workflow.pk}").delete()
+                if workflow.task_group is not None and not workflow.task_group.all_tasks_dispatched:
+                    workflow.task_group.all_tasks_dispatched = True
+                    workflow.task_group.save(
+                        update_fields=["all_tasks_dispatched", "pulp_last_updated"]
+                    )
                 http_status = None
             else:
                 http_status = status.HTTP_409_CONFLICT

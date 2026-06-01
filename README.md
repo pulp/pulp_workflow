@@ -87,3 +87,27 @@ If any child task ends in a non-`completed` state, or if dispatching a child
 raises, the next `execute_workflow` invocation records the failure on the
 workflow (`error` field, including the child's traceback when available),
 transitions the workflow to `failed`, and stops the chain.
+
+## Task groups
+
+Every workflow is backed by a pulpcore `TaskGroup`. On creation, the workflow
+allocates a `TaskGroup(description="Workflow: <name>")` in the workflow's
+domain and links it via the `task_group` field on the Workflow resource. The
+dispatched child tasks and the `execute_workflow` continuations are members
+of that group. The initial `execute_workflow` task itself is dispatched by
+the `TaskSchedule` created at workflow-create time and is *not* a member of
+the group. Membership means:
+
+- `GET /pulp/api/v3/task-groups/<pk>/` lists every task the workflow has
+  spawned in one place.
+- `GET /pulp/api/v3/tasks/?task_group=<pk>` filters tasks to that workflow.
+- Existing client tooling (`monitor_task_group`,
+  `TaskGroupOperationResponse`) works against workflows the same way it does
+  for replication and pulp-import.
+- A child task can discover that it is part of a workflow via
+  `TaskGroup.current()` without `pulp_workflow` having to plumb that context
+  through itself.
+
+The group's `all_tasks_dispatched` flag is `False` while the workflow is
+running and flipped to `True` exactly once the workflow reaches a terminal
+state (`completed`, `failed`, or `canceled`).

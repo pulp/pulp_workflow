@@ -6,7 +6,7 @@ from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 
 from pulpcore.plugin.constants import TASK_CHOICES, TASK_STATES
-from pulpcore.plugin.models import TaskSchedule
+from pulpcore.plugin.models import TaskGroup, TaskSchedule
 from pulpcore.plugin.serializers import (
     IdentityField,
     ModelSerializer,
@@ -213,6 +213,15 @@ class WorkflowSerializer(ModelSerializer):
             "Href of the pulpcore Task currently being dispatched for this workflow, if any."
         ),
     )
+    task_group = RelatedField(
+        view_name="task-groups-detail",
+        read_only=True,
+        allow_null=True,
+        help_text=_(
+            "Href of the pulpcore TaskGroup containing tasks dispatched by this workflow "
+            "(child tasks and execute_workflow continuations)."
+        ),
+    )
     tasks = WorkflowTaskSerializer(
         many=True,
         allow_empty=False,
@@ -230,6 +239,7 @@ class WorkflowSerializer(ModelSerializer):
             "finished_at",
             "error",
             "current_task",
+            "task_group",
             "tasks",
         )
 
@@ -248,6 +258,11 @@ class WorkflowSerializer(ModelSerializer):
     def create(self, validated_data):
         tasks_data = validated_data.pop("tasks")
         workflow = Workflow.objects.create(**validated_data)
+        workflow.task_group = TaskGroup.objects.create(
+            description=f"Workflow: {workflow.name}",
+            pulp_domain=workflow.pulp_domain,
+        )
+        workflow.save(update_fields=["task_group", "pulp_last_updated"])
         for task_index, task_data in enumerate(tasks_data):
             task_args = task_data.pop("task_args", [])
             task_kwargs = task_data.pop("task_kwargs", [])

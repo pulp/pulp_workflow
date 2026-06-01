@@ -125,7 +125,7 @@ def test_delete_workflow_not_supported(workflow_bindings):
 
 
 @pytest.mark.parallel
-def test_cancel_workflow(workflow_bindings, workflow_factory):
+def test_cancel_workflow(workflow_bindings, pulpcore_bindings, workflow_factory):
     """A waiting Workflow can be canceled and reaches the canceled state."""
     # Schedule the workflow far enough in the future that it cannot start before
     # the cancel request is processed.
@@ -144,6 +144,11 @@ def test_cancel_workflow(workflow_bindings, workflow_factory):
     # The workflow is still readable in the canceled state.
     fetched = workflow_bindings.WorkflowsApi.read(workflow.pulp_href)
     assert fetched.state == "canceled"
+
+    # Cancelling flips the workflow's TaskGroup to all_tasks_dispatched=True.
+    assert fetched.task_group is not None
+    task_group = pulpcore_bindings.TaskGroupsApi.read(fetched.task_group)
+    assert task_group.all_tasks_dispatched is True
 
 
 @pytest.mark.parallel

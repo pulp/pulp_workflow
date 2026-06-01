@@ -26,6 +26,7 @@ class Workflow(BaseModel):
     Relations:
         pulp_domain (models.ForeignKey): Domain the workflow belongs to.
         current_task (models.ForeignKey): The task currently in progress (if any).
+        task_group (models.ForeignKey): The pulpcore TaskGroup for all tasks of this workflow.
     """
 
     name = models.TextField(unique=True)
@@ -39,6 +40,12 @@ class Workflow(BaseModel):
     pulp_domain = models.ForeignKey("core.Domain", default=get_domain_pk, on_delete=models.CASCADE)
     current_task = models.ForeignKey(
         "WorkflowTask",
+        null=True,
+        related_name="+",
+        on_delete=models.SET_NULL,
+    )
+    task_group = models.ForeignKey(
+        "core.TaskGroup",
         null=True,
         related_name="+",
         on_delete=models.SET_NULL,
