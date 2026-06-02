@@ -21,7 +21,7 @@ workflow, cancel it (if it has not yet started) and create a new one.
 | GET | `/pulp/api/v3/workflow/workflows/` | List workflows |
 | POST | `/pulp/api/v3/workflow/workflows/` | Create a workflow (with tasks) |
 | GET | `/pulp/api/v3/workflow/workflows/<pk>/` | Retrieve a workflow |
-| PATCH | `/pulp/api/v3/workflow/workflows/<pk>/` | Cancel a waiting workflow (body: `{"state": "canceled"}`). Returns 409 if the workflow has already started; only `"canceled"` is accepted as the target state. |
+| PATCH | `/pulp/api/v3/workflow/workflows/<pk>/` | Cancel a workflow (body: `{"state": "canceled"}`). Works whether the workflow is `waiting` or `running`; returns 409 only if the workflow is already in a terminal state. Only `"canceled"` is accepted as the target state. |
 
 ## How execution works
 
@@ -115,3 +115,35 @@ the group. Membership means:
 The group's `all_tasks_dispatched` flag is `False` while the workflow is
 running and flipped to `True` exactly once the workflow reaches a terminal
 state (`completed`, `failed`, or `canceled`).
+
+## Cancellation
+
+A workflow can be canceled either by `PATCH`ing the workflow with
+`{"state": "canceled"}` or by canceling its backing `TaskGroup` directly.
+Both paths converge on the same terminal state: `Workflow.state = canceled`,
+`finished_at` set, `TaskGroup.all_tasks_dispatched = True`, and any
+in-flight or queued child tasks (including the `execute_workflow`
+continuation) canceled. PATCH on an already-terminal workflow returns 409.
+
+The `TaskGroup` cancel path is bridged back to the workflow row via a
+`post_save` receiver on `TaskGroup`, so cancellation initiated outside the
+workflow viewset still terminates the `Workflow` correctly.
+
+```mermaid
+flowchart TD
+    A[PATCH /pulp/api/v3/workflow/workflows/&lt;pk&gt;/<br/>state: canceled] --> B[WorkflowViewSet]
+    B --> C[Workflow.state = canceled<br/>finished_at = now]
+    C --> D[cancel_task_group<br/>on commit]
+
+    E[POST /pulp/api/v3/task-groups/&lt;pk&gt;/cancel/] --> F[pulpcore cancels<br/>group's tasks]
+    F --> G[TaskGroup.all_tasks_dispatched = True<br/>TaskGroup.save]
+
+    D --> G
+    G --> H[post_save receiver<br/>on TaskGroup]
+    H --> I{Workflow already<br/>terminal?}
+    I -- yes --> J[no-op]
+    I -- no --> K[Workflow.state = canceled<br/>finished_at = now]
+
+    classDef terminal fill:#e8f5e9,stroke:#2e7d32;
+    class C,K terminal;
+```

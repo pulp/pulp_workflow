@@ -1,3 +1,5 @@
+import functools
+
 from django.db import transaction
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
@@ -6,6 +8,7 @@ from rest_framework.response import Response
 
 from pulpcore.plugin.constants import TASK_STATES
 from pulpcore.plugin.models import TaskSchedule
+from pulpcore.plugin.tasking import cancel_task_group
 from pulpcore.plugin.viewsets import (
     DATETIME_FILTER_OPTIONS,
     NAME_FILTER_OPTIONS,
@@ -140,8 +143,8 @@ class WorkflowViewSet(
 
     @extend_schema(
         description=(
-            "Cancel a workflow. A workflow can only be canceled before it has started "
-            "executing; otherwise this returns 409 Conflict."
+            "Cancel a workflow. Workflows can be canceled while waiting or running; "
+            "canceling a workflow that has already reached a terminal state returns 409."
         ),
         summary="Cancel a workflow",
         operation_id="workflows_cancel",
@@ -164,6 +167,19 @@ class WorkflowViewSet(
                     workflow.task_group.all_tasks_dispatched = True
                     workflow.task_group.save(
                         update_fields=["all_tasks_dispatched", "pulp_last_updated"]
+                    )
+                fired_callbacks = True
+                http_status = None
+            elif workflow.state == TASK_STATES.RUNNING:
+                workflow.state = TASK_STATES.CANCELED
+                workflow.finished_at = timezone.now()
+                workflow.save(update_fields=["state", "finished_at", "pulp_last_updated"])
+                # Cancel in-flight child tasks and queued continuations only after the
+                # outermost transaction commits, so workers don't observe stale state and
+                # we don't extend the surrounding transaction.
+                if workflow.task_group_id is not None:
+                    transaction.on_commit(
+                        functools.partial(cancel_task_group, workflow.task_group_id)
                     )
                 fired_callbacks = True
                 http_status = None
