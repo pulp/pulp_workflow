@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from pulpcore.plugin.constants import TASK_STATES
 from pulpcore.plugin.models import TaskSchedule
 from pulpcore.plugin.viewsets import (
+    DATETIME_FILTER_OPTIONS,
     NAME_FILTER_OPTIONS,
     BaseFilterSet,
     LabelFilter,
@@ -15,11 +16,32 @@ from pulpcore.plugin.viewsets import (
     RolesMixin,
 )
 
-from pulp_workflow.app.models import Workflow
-from pulp_workflow.app.serializers import WorkflowCancelSerializer, WorkflowSerializer
+from pulp_workflow.app.models import CallbackService, Workflow
+from pulp_workflow.app.serializers import (
+    CallbackServiceSerializer,
+    WorkflowCancelSerializer,
+    WorkflowSerializer,
+)
+from pulp_workflow.app.tasks import dispatch_workflow_callbacks
 
-# DATETIME_FILTER_OPTIONS is not re-exported through pulpcore.plugin, so define locally.
-DATETIME_FILTER_OPTIONS = ["exact", "lt", "lte", "gt", "gte", "range", "isnull"]
+
+class WorkflowPluginViewSetMixin:
+    """Mixin that mounts every ``pulp_workflow`` endpoint under ``/workflow/``.
+
+    Pulpcore does not automatically scope plain (non-Master/Detail) plugin viewsets under their
+    plugin name, so ``endpoint_pieces`` is overridden here to prepend ``"workflow"``. This keeps
+    ``pulp_workflow``'s endpoints (``/pulp/api/v3/workflow/workflows/``,
+    ``/pulp/api/v3/workflow/callback-services/``) grouped under a stable plugin prefix.
+
+    Implemented as a plain mixin rather than a ``NamedModelViewSet`` subclass so that pulpcore's
+    ``import_viewsets`` does not try to introspect a ``queryset`` on it during app startup.
+    Must be listed *before* ``NamedModelViewSet`` in a viewset's MRO so ``super()`` resolves to
+    the right ``endpoint_pieces`` implementation.
+    """
+
+    @classmethod
+    def endpoint_pieces(cls):
+        return ["workflow", *super().endpoint_pieces()]
 
 
 class WorkflowFilter(BaseFilterSet):
@@ -44,6 +66,7 @@ class WorkflowFilter(BaseFilterSet):
 
 
 class WorkflowViewSet(
+    WorkflowPluginViewSetMixin,
     NamedModelViewSet,
     mixins.CreateModelMixin,
     mixins.RetrieveModelMixin,
@@ -61,9 +84,15 @@ class WorkflowViewSet(
     queryset = (
         Workflow.objects.all()
         .select_related("task_group", "current_task__dispatched_task")
-        .prefetch_related("tasks")
+        .prefetch_related(
+            "tasks",
+            "callbacks",
+            "callbacks__callback_service",
+            "callbacks__dispatched_task",
+        )
     )
     endpoint_name = "workflows"
+    pulp_tag_name = "Workflows"
     serializer_class = WorkflowSerializer
     filterset_class = WorkflowFilter
     ordering = "-pulp_created"
@@ -123,6 +152,7 @@ class WorkflowViewSet(
         serializer.is_valid(raise_exception=True)
 
         workflow = self.get_object()
+        fired_callbacks = False
         with transaction.atomic():
             workflow = Workflow.objects.select_for_update().get(pk=workflow.pk)
             if workflow.state == TASK_STATES.WAITING:
@@ -135,9 +165,101 @@ class WorkflowViewSet(
                     workflow.task_group.save(
                         update_fields=["all_tasks_dispatched", "pulp_last_updated"]
                     )
+                fired_callbacks = True
                 http_status = None
             else:
                 http_status = status.HTTP_409_CONFLICT
 
+        if fired_callbacks:
+            # Fire CANCELED + FINISHED callbacks. Done outside the select_for_update block so the
+            # dispatch can read the workflow's persisted state.
+            dispatch_workflow_callbacks(workflow, TASK_STATES.CANCELED)
+
         out = WorkflowSerializer(workflow, context={"request": request})
         return Response(out.data, status=http_status)
+
+
+class CallbackServiceFilter(BaseFilterSet):
+    """Filter for CallbackServices."""
+
+    class Meta:
+        model = CallbackService
+        fields = {
+            "name": NAME_FILTER_OPTIONS,
+            "pulp_created": DATETIME_FILTER_OPTIONS,
+        }
+
+
+class CallbackServiceViewSet(
+    WorkflowPluginViewSetMixin,
+    NamedModelViewSet,
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.ListModelMixin,
+    mixins.UpdateModelMixin,
+    mixins.DestroyModelMixin,
+    RolesMixin,
+):
+    """A ViewSet for managing CallbackServices.
+
+    A CallbackService points at an absolute path to an executable on the Pulp worker host. It is
+    invoked when an attached Workflow reaches a registered lifecycle event. Because callbacks run
+    arbitrary host scripts they are treated as a privileged resource and require
+    ``callbackservice_admin``-level permissions to manage.
+    """
+
+    queryset = CallbackService.objects.all()
+    endpoint_name = "callback-services"
+    pulp_tag_name = "Callback Services"
+    serializer_class = CallbackServiceSerializer
+    filterset_class = CallbackServiceFilter
+    ordering = "-pulp_created"
+    queryset_filtering_required_permission = "workflow.view_callbackservice"
+
+    DEFAULT_ACCESS_POLICY = {
+        "statements": [
+            {
+                "action": ["list", "retrieve", "my_permissions"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": "has_model_or_domain_or_obj_perms:workflow.view_callbackservice",
+            },
+            {
+                "action": ["create"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": "has_model_or_domain_perms:workflow.add_callbackservice",
+            },
+            {
+                "action": ["update", "partial_update"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": "has_model_or_domain_or_obj_perms:workflow.change_callbackservice",
+            },
+            {
+                "action": ["destroy"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": "has_model_or_domain_or_obj_perms:workflow.delete_callbackservice",
+            },
+            {
+                "action": ["list_roles", "add_role", "remove_role"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": (
+                    "has_model_or_domain_or_obj_perms:workflow.manage_roles_callbackservice"
+                ),
+            },
+        ],
+        "queryset_scoping": {"function": "scope_queryset"},
+    }
+    LOCKED_ROLES = {
+        "workflow.callbackservice_admin": [
+            "workflow.view_callbackservice",
+            "workflow.add_callbackservice",
+            "workflow.change_callbackservice",
+            "workflow.delete_callbackservice",
+            "workflow.manage_roles_callbackservice",
+        ],
+        "workflow.callbackservice_viewer": ["workflow.view_callbackservice"],
+    }

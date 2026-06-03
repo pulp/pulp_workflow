@@ -7,7 +7,12 @@ from django.utils import timezone
 from pulpcore.plugin.constants import TASK_STATES
 from pulpcore.plugin.tasking import dispatch
 
-from pulp_workflow.app.models import Workflow, WorkflowTask
+from pulp_workflow.app.models import (
+    TRANSITION_CALLBACK_TYPES,
+    Workflow,
+    WorkflowCallback,
+    WorkflowTask,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -15,6 +20,54 @@ _log = logging.getLogger(__name__)
 def _workflow_resource(workflow_pk):
     """Resource string used to chain workflow steps via shared/exclusive locks."""
     return f"pulp_workflow:workflow:{workflow_pk}"
+
+
+def dispatch_workflow_callbacks(workflow, new_state):
+    """Dispatch a ``run_callback`` task for each callback matching ``new_state``.
+
+    Called whenever a Workflow transitions to a new state. The mapping from state to callback types
+    lives in ``TRANSITION_CALLBACK_TYPES``; states not in that map (e.g. ``waiting``) do not fire
+    callbacks.
+
+    Best-effort: a failure to dispatch any one callback is logged but does not bubble up so that
+    one bad callback cannot break the workflow's own state transition.
+    """
+    types = TRANSITION_CALLBACK_TYPES.get(new_state)
+    if not types:
+        return
+    callbacks = workflow.callbacks.filter(callback_type__in=types).select_related(
+        "callback_service"
+    )
+    for wfcb in callbacks:
+        try:
+            child = dispatch(
+                run_callback,
+                kwargs={"workflow_callback_pk": str(wfcb.pk)},
+                task_group=workflow.task_group,
+            )
+        except Exception:
+            _log.exception(
+                "Failed to dispatch callback %s for workflow %s",
+                wfcb.callback_service.name,
+                workflow.name,
+            )
+            continue
+        wfcb.dispatched_task = child
+        wfcb.save(update_fields=["dispatched_task", "pulp_last_updated"])
+
+
+def run_callback(workflow_callback_pk):
+    """Pulp task that invokes a ``CallbackService`` for one ``WorkflowCallback``.
+
+    The callback service runs as a subprocess on the worker host with the workflow's name, state,
+    pk, and labels exposed via ``PULP_WORKFLOW_*`` environment variables. Non-zero exit raises
+    ``RuntimeError``, which marks this task as failed (visible via the WorkflowCallback's
+    ``dispatched_task`` href on the Workflow detail endpoint).
+    """
+    wfcb = WorkflowCallback.objects.select_related("workflow", "callback_service").get(
+        pk=workflow_callback_pk
+    )
+    return wfcb.callback_service.run(wfcb.workflow)
 
 
 def execute_workflow(workflow_pk, next_index=0):
@@ -50,6 +103,7 @@ def execute_workflow(workflow_pk, next_index=0):
             workflow.started_at = timezone.now()
             workflow.save(update_fields=["state", "started_at", "pulp_last_updated"])
         _log.info("Workflow %s started.", workflow.name)
+        dispatch_workflow_callbacks(workflow, TASK_STATES.RUNNING)
         prev_task = None
     else:
         # Continuation: inspect the previous step's child task.
@@ -90,6 +144,7 @@ def execute_workflow(workflow_pk, next_index=0):
         workflow.save(update_fields=["state", "finished_at", "current_task", "pulp_last_updated"])
         _mark_task_group_dispatched(workflow)
         _log.info("Workflow %s completed.", workflow.name)
+        dispatch_workflow_callbacks(workflow, TASK_STATES.COMPLETED)
         return
 
     workflow.current_task = wf_task
@@ -149,6 +204,7 @@ def _fail_workflow(workflow, wf_task, exc=None, description=None, child_error=No
     _log.info(
         "Workflow %s failed at step %d (%s).", workflow.name, wf_task.index, wf_task.task_name
     )
+    dispatch_workflow_callbacks(workflow, TASK_STATES.FAILED)
 
 
 def _mark_task_group_dispatched(workflow):

@@ -40,6 +40,10 @@ pulp_env_s3: {}
 pulp_scheme: "https"
 pulp_settings:
   api_root: "/pulp/"
+  WORKFLOW_CALLBACK_FIELDS:
+    - "name"
+    - "state"
+    - "labels:email"
 pulp_settings_azure:
   MEDIA_ROOT: ""
   STORAGES:

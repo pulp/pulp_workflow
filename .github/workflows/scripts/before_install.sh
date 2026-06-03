@@ -44,7 +44,7 @@ legacy_component_name: "pulp_workflow"
 component_name: "workflow"
 component_version: "${COMPONENT_VERSION}"
 pulp_env: {}
-pulp_settings: {"api_root": "/pulp/"}
+pulp_settings: {"WORKFLOW_CALLBACK_FIELDS": ["name", "state", "labels:email"], "api_root": "/pulp/"}
 pulp_scheme: "https"
 image:
   name: "pulp"
