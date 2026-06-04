@@ -7,9 +7,29 @@ The workflow has two tasks:
        the unique ``RepositoryVersion`` created by task 0.
 """
 
+import time
 import uuid
 
+import pytest
+
 from pulpcore.plugin.util import extract_pk
+
+from pulp_workflow.pytest_plugin import (
+    WORKFLOW_FINAL_STATES,
+    WORKFLOW_SLEEP_TIME,
+    WORKFLOW_TIMEOUT,
+)
+
+
+def _wait_for_workflow(api, workflow_href, timeout=WORKFLOW_TIMEOUT):
+    """Poll a Workflow until it reaches a final state."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        workflow = api.read(workflow_href)
+        if workflow.state in WORKFLOW_FINAL_STATES:
+            return workflow
+        time.sleep(WORKFLOW_SLEEP_TIME)
+    raise AssertionError(f"Workflow {workflow_href} did not finish within {timeout}s")
 
 
 def test_execute_workflow_add_content_and_publish(
@@ -118,3 +138,98 @@ def test_execute_workflow_add_content_and_publish(
     publication = file_bindings.PublicationsFileApi.read(task1_publications[0])
     assert publication.repository_version == version_href
     assert publication.manifest == "PULP_MANIFEST"
+
+
+def _wait_for_state(api, workflow_href, predicate, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        workflow = api.read(workflow_href)
+        if predicate(workflow):
+            return workflow
+        time.sleep(0.5)
+    raise AssertionError(f"Workflow {workflow_href} did not satisfy predicate within {timeout}s")
+
+
+def _many_orphan_cleanup_tasks(n):
+    safe_kwargs = [{"kwarg_key": "orphan_protection_time", "value": 525600}]
+    return [
+        {"task_name": "pulpcore.app.tasks.orphan_cleanup", "task_kwargs": safe_kwargs}
+        for _ in range(n)
+    ]
+
+
+def _many_sleep_tasks(n, seconds=15):
+    # Long-running tasks so cancellation has a deterministic window to land
+    # while tasks are still in-flight or queued.
+    return [
+        {
+            "task_name": "pulpcore.app.tasks.test.sleep",
+            "task_kwargs": [{"kwarg_key": "interval", "value": seconds}],
+        }
+        for _ in range(n)
+    ]
+
+
+def test_cancel_running_workflow_via_patch(workflow_bindings, pulpcore_bindings, workflow_factory):
+    """A RUNNING workflow can be canceled via PATCH; in-flight tasks are canceled."""
+    workflow = workflow_factory(tasks=_many_sleep_tasks(15))
+
+    running = _wait_for_state(
+        workflow_bindings.WorkflowsApi,
+        workflow.pulp_href,
+        lambda w: w.state in {"running", "completed", "failed", "canceled"},
+        timeout=60,
+    )
+    # If the workflow happened to finish before we could observe RUNNING, the test
+    # is meaningless; require it to actually have entered RUNNING.
+    assert running.state == "running", f"workflow finished too quickly: state={running.state!r}"
+
+    canceled = workflow_bindings.WorkflowsApi.workflows_cancel(
+        workflow.pulp_href, {"state": "canceled"}
+    )
+    assert canceled.state == "canceled"
+    assert canceled.finished_at is not None
+
+    finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
+    assert finished.state == "canceled"
+    assert finished.task_group is not None
+
+    task_group = pulpcore_bindings.TaskGroupsApi.read(finished.task_group)
+    assert task_group.all_tasks_dispatched is True
+    # Some tasks in the group must have ended in CANCELED (or CANCELING) — cancel_task_group
+    # cancels every in-flight or queued task in the group.
+    states = {t.state for t in task_group.tasks}
+    assert "canceled" in states or "canceling" in states
+
+
+def test_cancel_running_workflow_via_task_group(
+    workflow_bindings, pulpcore_bindings, workflow_factory
+):
+    """Canceling the underlying TaskGroup propagates CANCELED to the Workflow."""
+    workflow = workflow_factory(tasks=_many_sleep_tasks(15))
+
+    running = _wait_for_state(
+        workflow_bindings.WorkflowsApi,
+        workflow.pulp_href,
+        lambda w: w.state in {"running", "completed", "failed", "canceled"},
+        timeout=60,
+    )
+    assert running.state == "running", f"workflow finished too quickly: state={running.state!r}"
+    assert running.task_group is not None
+
+    pulpcore_bindings.TaskGroupsApi.task_groups_cancel(running.task_group, {"state": "canceled"})
+
+    finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
+    assert finished.state == "canceled"
+    assert finished.finished_at is not None
+
+
+def test_cancel_terminal_workflow_returns_409(workflow_bindings, workflow_factory):
+    """Canceling an already-terminal workflow returns 409 Conflict."""
+    workflow = workflow_factory(tasks=_many_orphan_cleanup_tasks(2))
+    finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
+    assert finished.state == "completed"
+
+    with pytest.raises(workflow_bindings.ApiException) as exc:
+        workflow_bindings.WorkflowsApi.workflows_cancel(workflow.pulp_href, {"state": "canceled"})
+    assert exc.value.status == 409

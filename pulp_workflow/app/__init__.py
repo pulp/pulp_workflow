@@ -9,3 +9,7 @@ class PulpWorkflowPluginAppConfig(PulpPluginAppConfig):
     version = "0.1.0.dev"
     python_package_name = "pulp-workflow"
     domain_compatible = True
+
+    def ready(self):
+        super().ready()
+        from pulp_workflow.app import signals  # noqa: F401

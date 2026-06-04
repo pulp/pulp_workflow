@@ -23,7 +23,7 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-  "pulpcore>=3.111.0,<3.115",
+  "pulpcore>=3.113.0,<3.115",
 ]
 
 [project.urls]

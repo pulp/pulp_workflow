@@ -92,12 +92,20 @@ def execute_workflow(workflow_pk, next_index=0):
     """
     workflow = Workflow.objects.get(pk=workflow_pk)
 
+    # Honor cancellation at any step. The workflow row may have been flipped to
+    # CANCELED by a PATCH cancel, or by the post_save signal that propagates a
+    # TaskGroup-level cancel.
+    if workflow.state == TASK_STATES.CANCELED:
+        _log.info("Workflow %s is canceled; stopping at step %d.", workflow.name, next_index)
+        _mark_task_group_dispatched(workflow)
+        return
+
     if next_index == 0:
-        # First step: honor a pre-start cancel and transition to RUNNING.
+        # First step: re-check cancel under a row lock and transition to RUNNING.
         with transaction.atomic():
             workflow = Workflow.objects.select_for_update().get(pk=workflow_pk)
             if workflow.state == TASK_STATES.CANCELED:
-                _log.info("Workflow %s was canceled before starting.", workflow.name)
+                _mark_task_group_dispatched(workflow)
                 return
             workflow.state = TASK_STATES.RUNNING
             workflow.started_at = timezone.now()
