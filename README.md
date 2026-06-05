@@ -14,6 +14,14 @@ A `Workflow` owns one or more `WorkflowTask` rows. Each task records the
 when dispatching it. Workflows are immutable after creation: to change a
 workflow, cancel it (if it has not yet started) and create a new one.
 
+## Demo
+
+The demo walks through syncing and publishing a file repo via a Workflow, with
+a callback that notifies a messaging service (e.g. Discord/Slack) on
+completion. Watch the [YouTube demo](https://www.youtube.com/watch?v=Cqkh_DUPefY)
+for a video walkthrough, or follow the [written demo guide](docs/demo/README.md)
+to run it yourself end-to-end.
+
 ## Endpoints
 
 | Method | URL | Description |
