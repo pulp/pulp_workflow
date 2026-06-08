@@ -19,7 +19,7 @@ workflow, cancel it (if it has not yet started) and create a new one.
 The demo walks through syncing and publishing a file repo via a Workflow, with
 a callback that notifies a messaging service (e.g. Discord/Slack) on
 completion. Watch the [YouTube demo](https://www.youtube.com/watch?v=Cqkh_DUPefY)
-for a video walkthrough, or follow the [written demo guide](docs/demo/README.md)
+for a video walkthrough, or follow the [written demo guide](https://github.com/daviddavis/pulp_workflow/blob/main/docs/demo/README.md)
 to run it yourself end-to-end.
 
 ## Endpoints
