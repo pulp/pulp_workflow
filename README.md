@@ -33,7 +33,7 @@ to run it yourself end-to-end.
 | GET | `/pulp/api/v3/workflow/callback-services/` | List callback services |
 | POST | `/pulp/api/v3/workflow/callback-services/` | Register a callback service (an executable on the worker host) |
 | GET | `/pulp/api/v3/workflow/callback-services/<pk>/` | Retrieve a callback service |
-| PUT/PATCH | `/pulp/api/v3/workflow/callback-services/<pk>/` | Update a callback service |
+| PUT, PATCH | `/pulp/api/v3/workflow/callback-services/<pk>/` | Update a callback service |
 | DELETE | `/pulp/api/v3/workflow/callback-services/<pk>/` | Delete a callback service |
 
 ## Callbacks
