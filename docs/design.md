@@ -6,7 +6,7 @@ how cancellation propagates.
 
 ## How execution works
 
-When a workflow is created, TaskSchedule dispatches a single `execute_workflow`
+When a workflow is created, `TaskSchedule` dispatches a single `execute_workflow`
 task. Rather than looping inside one long-running task (which would pin a
 worker for the entire duration of the pipeline), `execute_workflow` runs one
 step at a time and re-dispatches itself for the next step. Each invocation
