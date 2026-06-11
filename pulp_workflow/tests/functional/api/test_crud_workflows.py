@@ -87,7 +87,8 @@ def test_read_workflow(workflow_bindings, workflow_factory):
 def test_list_workflows(workflow_bindings, workflow_factory):
     """Listing and filtering Workflows."""
     name = str(uuid.uuid4())
-    workflow_factory(name=name)
+    start_time = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    workflow_factory(name=name, start_time=start_time)
 
     results = workflow_bindings.WorkflowsApi.list(name=name)
     assert results.count == 1
