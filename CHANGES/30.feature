@@ -1,0 +1,1 @@
+Added a `pulpcore-manager add-callback-service` management command for registering a `CallbackService` from the worker host (mirrors pulpcore's `add-signing-service`). Useful for image bootstrap scripts that need to register a callback before the API serves traffic.

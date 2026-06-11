@@ -43,6 +43,30 @@ can be attached to a workflow to run on lifecycle events (`running`,
 `completed`, `failed`, `canceled`, or the synthetic `finished` event that
 fires on any terminal state).
 
+`CallbackService`s can be registered via the API (see
+[Endpoints](#endpoints)) or, for image-bootstrap scenarios where a callback
+needs to exist before the API serves traffic, via the
+`add-callback-service` management command:
+
+```bash
+pulpcore-manager add-callback-service <name> <script-path>
+```
+
+The command resolves the script path, runs the same validation as the API
+(absolute path, file exists, executable bit set), and persists the
+`CallbackService` row. Names must be unique within a domain; re-running with
+the same name fails with a clear error rather than silently updating, so
+bootstrap scripts that may run more than once should guard the call:
+
+```bash
+existing=$(pulpcore-manager shell -c \
+    "from pulp_workflow.app.models import CallbackService; \
+     print(' '.join(CallbackService.objects.values_list('name', flat=True)))")
+if [[ $existing != *"my-callback"* ]]; then
+    pulpcore-manager add-callback-service my-callback /path/to/script.sh
+fi
+```
+
 ## Design
 
 For details on how workflows execute, integrate with pulpcore `TaskGroup`s,
