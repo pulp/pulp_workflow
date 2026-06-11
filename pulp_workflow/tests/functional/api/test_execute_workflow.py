@@ -237,7 +237,14 @@ def test_cancel_terminal_workflow_returns_409(workflow_bindings, workflow_factor
 
 
 # Keys ``_fail_workflow`` is permitted to write into ``workflow.error``.
-_ALLOWED_ERROR_KEYS = {"task_index", "task_name", "description", "traceback", "child_error"}
+_ALLOWED_ERROR_KEYS = {
+    "task_index",
+    "task_name",
+    "description",
+    "traceback",
+    "child_error",
+}
+
 
 def test_failed_workflow_records_child_error_for_bad_task_args(
     workflow_bindings, pulpcore_bindings, workflow_factory
@@ -279,9 +286,7 @@ def test_failed_workflow_records_child_error_for_bad_task_args(
     assert error["child_error"] == child_task.error
 
 
-def test_failed_workflow_error_does_not_leak_task_arg_values(
-    workflow_bindings, workflow_factory
-):
+def test_failed_workflow_error_does_not_leak_task_arg_values(workflow_bindings, workflow_factory):
     """A sentinel value passed in task kwargs must not appear in workflow.error"""
     sentinel = f"audit-sentinel-{uuid.uuid4()}"
     workflow = workflow_factory(
@@ -300,9 +305,7 @@ def test_failed_workflow_error_does_not_leak_task_arg_values(
     finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
     assert finished.state == "failed"
     serialized = json.dumps(finished.error, default=str)
-    assert sentinel not in serialized, (
-        f"workflow.error leaked task arg value: {serialized!r}"
-    )
+    assert sentinel not in serialized, f"workflow.error leaked task arg value: {serialized!r}"
 
 
 def test_failed_workflow_dispatch_traceback_does_not_leak_task_arg_values(
