@@ -255,7 +255,10 @@ def test_failed_workflow_records_child_error_for_bad_task_args(
             {
                 "task_name": "pulpcore.app.tasks.repository.delete_version",
                 "task_kwargs": [
-                    {"kwarg_key": "nonexistent_kwarg", "value": "00000000-0000-0000-0000-000000000000"},
+                    {
+                        "kwarg_key": "nonexistent_kwarg",
+                        "value": "00000000-0000-0000-0000-000000000000",
+                    }
                 ],
             },
         ],
