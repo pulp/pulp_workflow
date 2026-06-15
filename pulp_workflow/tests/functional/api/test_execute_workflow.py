@@ -253,10 +253,10 @@ def test_failed_workflow_records_child_error_for_bad_task_args(
     workflow = workflow_factory(
         tasks=[
             {
-                "task_name": "pulpcore.app.tasks.test.sleep",
+                "task_name": "pulpcore.app.tasks.repository.delete_version",
                 "task_kwargs": [
-                    # str is not a valid interval; the worker raises TypeError.
-                    {"kwarg_key": "interval", "value": "not-a-number"},
+                    {"kwarg_key": "pk", "value": "00000000-0000-0000-0000-000000000000"},
+                    {"kwarg_key": "extra_bad_arg", "value": "trigger-type-error"},
                 ],
             },
         ],
@@ -270,7 +270,7 @@ def test_failed_workflow_records_child_error_for_bad_task_args(
     assert isinstance(error, dict)
     assert set(error).issubset(_ALLOWED_ERROR_KEYS)
     assert error["task_index"] == 0
-    assert error["task_name"] == "pulpcore.app.tasks.test.sleep"
+    assert error["task_name"] == "pulpcore.app.tasks.repository.delete_version"
     assert isinstance(error["description"], str) and error["description"]
     # No "traceback" key for the child-failure path: it is only set when
     # "_fail_workflow" is called with "exc=" (the dispatch-time path).
@@ -288,9 +288,9 @@ def test_failed_workflow_error_does_not_leak_task_arg_values(workflow_bindings, 
     workflow = workflow_factory(
         tasks=[
             {
-                "task_name": "pulpcore.app.tasks.test.sleep",
+                "task_name": "pulpcore.app.tasks.repository.delete_version",
                 "task_kwargs": [
-                    {"kwarg_key": "interval", "value": 0},
+                    {"kwarg_key": "pk", "value": "00000000-0000-0000-0000-000000000000"},
                     {"kwarg_key": "audit_marker", "value": sentinel},
                 ],
             },
