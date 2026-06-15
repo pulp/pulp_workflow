@@ -246,19 +246,24 @@ _ALLOWED_ERROR_KEYS = {
 }
 
 
-def test_failed_workflow_records_child_error_for_bad_task_args(
+# A test-only task that raises a ``PulpException`` subclass on every call.
+# Using a ``PulpException`` subclass (rather than e.g. ``TypeError`` from bad
+# kwargs) avoids the ``pulpcore.deprecation`` warning that pulpcore logs for
+# any non-``PulpException`` escaping a task; the CI ``deprecations`` job fails
+# if any such warning is emitted.
+_FAILING_TASK = "pulp_workflow.tests.functional.api._failing_tasks.fail_with_validation_error"
+
+
+def test_failed_workflow_records_child_error_when_child_task_fails(
     workflow_bindings, pulpcore_bindings, workflow_factory
 ):
-    """A child task that fails because of bad args surfaces a well-formed error payload."""
+    """A child task that fails surfaces a well-formed error payload."""
     workflow = workflow_factory(
         tasks=[
             {
-                "task_name": "pulpcore.app.tasks.repository.delete_version",
+                "task_name": _FAILING_TASK,
                 "task_kwargs": [
-                    {
-                        "kwarg_key": "nonexistent_kwarg",
-                        "value": "00000000-0000-0000-0000-000000000000",
-                    }
+                    {"kwarg_key": "audit_marker", "value": "trigger-failure"},
                 ],
             },
         ],
@@ -272,7 +277,7 @@ def test_failed_workflow_records_child_error_for_bad_task_args(
     assert isinstance(error, dict)
     assert set(error).issubset(_ALLOWED_ERROR_KEYS)
     assert error["task_index"] == 0
-    assert error["task_name"] == "pulpcore.app.tasks.repository.delete_version"
+    assert error["task_name"] == _FAILING_TASK
     assert isinstance(error["description"], str) and error["description"]
     # No "traceback" key for the child-failure path: it is only set when
     # "_fail_workflow" is called with "exc=" (the dispatch-time path).
@@ -290,9 +295,9 @@ def test_failed_workflow_error_does_not_leak_task_arg_values(workflow_bindings, 
     workflow = workflow_factory(
         tasks=[
             {
-                "task_name": "pulpcore.app.tasks.repository.delete_version",
+                "task_name": _FAILING_TASK,
                 "task_kwargs": [
-                    {"kwarg_key": "nonexistent_kwarg", "value": sentinel},
+                    {"kwarg_key": "audit_marker", "value": sentinel},
                 ],
             },
         ],
