@@ -121,7 +121,9 @@ def test_execute_workflow_add_content_and_publish(
     assert task1_task.parent_task is not None
 
     # Task 0 produced version 1.
-    task0_versions = [h for h in (task0_task.created_resources or []) if "/versions/" in h]
+    task0_versions = [
+        h for h in (task0_task.created_resources or []) if "/versions/" in h
+    ]
     assert len(task0_versions) == 1
     version_href = task0_versions[0]
     assert version_href.endswith("/versions/1/")
@@ -134,7 +136,9 @@ def test_execute_workflow_add_content_and_publish(
     assert refreshed_repo.latest_version_href == version_href
 
     # ---- Task 1 produced a publication for that version.
-    task1_publications = [h for h in (task1_task.created_resources or []) if "/publications/" in h]
+    task1_publications = [
+        h for h in (task1_task.created_resources or []) if "/publications/" in h
+    ]
     assert len(task1_publications) == 1
     publication = file_bindings.PublicationsFileApi.read(task1_publications[0])
     assert publication.repository_version == version_href
@@ -148,7 +152,9 @@ def _wait_for_state(api, workflow_href, predicate, timeout):
         if predicate(workflow):
             return workflow
         time.sleep(0.5)
-    raise AssertionError(f"Workflow {workflow_href} did not satisfy predicate within {timeout}s")
+    raise AssertionError(
+        f"Workflow {workflow_href} did not satisfy predicate within {timeout}s"
+    )
 
 
 def _many_orphan_cleanup_tasks(n):
@@ -171,7 +177,9 @@ def _many_sleep_tasks(n, seconds=15):
     ]
 
 
-def test_cancel_running_workflow_via_patch(workflow_bindings, pulpcore_bindings, workflow_factory):
+def test_cancel_running_workflow_via_patch(
+    workflow_bindings, pulpcore_bindings, workflow_factory
+):
     """A RUNNING workflow can be canceled via PATCH; in-flight tasks are canceled."""
     workflow = workflow_factory(tasks=_many_sleep_tasks(15))
 
@@ -183,7 +191,9 @@ def test_cancel_running_workflow_via_patch(workflow_bindings, pulpcore_bindings,
     )
     # If the workflow happened to finish before we could observe RUNNING, the test
     # is meaningless; require it to actually have entered RUNNING.
-    assert running.state == "running", f"workflow finished too quickly: state={running.state!r}"
+    assert running.state == "running", (
+        f"workflow finished too quickly: state={running.state!r}"
+    )
 
     canceled = workflow_bindings.WorkflowsApi.workflows_cancel(
         workflow.pulp_href, {"state": "canceled"}
@@ -215,10 +225,14 @@ def test_cancel_running_workflow_via_task_group(
         lambda w: w.state in {"running", "completed", "failed", "canceled"},
         timeout=60,
     )
-    assert running.state == "running", f"workflow finished too quickly: state={running.state!r}"
+    assert running.state == "running", (
+        f"workflow finished too quickly: state={running.state!r}"
+    )
     assert running.task_group is not None
 
-    pulpcore_bindings.TaskGroupsApi.task_groups_cancel(running.task_group, {"state": "canceled"})
+    pulpcore_bindings.TaskGroupsApi.task_groups_cancel(
+        running.task_group, {"state": "canceled"}
+    )
 
     finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
     assert finished.state == "canceled"
@@ -232,7 +246,9 @@ def test_cancel_terminal_workflow_returns_409(workflow_bindings, workflow_factor
     assert finished.state == "completed"
 
     with pytest.raises(workflow_bindings.ApiException) as exc:
-        workflow_bindings.WorkflowsApi.workflows_cancel(workflow.pulp_href, {"state": "canceled"})
+        workflow_bindings.WorkflowsApi.workflows_cancel(
+            workflow.pulp_href, {"state": "canceled"}
+        )
     assert exc.value.status == 409
 
 
@@ -255,7 +271,10 @@ def test_failed_workflow_records_child_error_for_bad_task_args(
             {
                 "task_name": "pulpcore.app.tasks.repository.delete_version",
                 "task_kwargs": [
-                    {"kwarg_key": "nonexistent_kwarg", "value": "00000000-0000-0000-0000-000000000000"},
+                    {
+                        "kwarg_key": "nonexistent_kwarg",
+                        "value": "00000000-0000-0000-0000-000000000000",
+                    },
                 ],
             },
         ],
@@ -282,7 +301,9 @@ def test_failed_workflow_records_child_error_for_bad_task_args(
     assert error["child_error"] == child_task.error
 
 
-def test_failed_workflow_error_does_not_leak_task_arg_values(workflow_bindings, workflow_factory):
+def test_failed_workflow_error_does_not_leak_task_arg_values(
+    workflow_bindings, workflow_factory
+):
     sentinel = f"audit-sentinel-{uuid.uuid4()}"
     workflow = workflow_factory(
         tasks=[
@@ -298,7 +319,9 @@ def test_failed_workflow_error_does_not_leak_task_arg_values(workflow_bindings, 
     finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
     assert finished.state == "failed"
     serialized = json.dumps(finished.error, default=str)
-    assert sentinel not in serialized, f"workflow.error leaked task arg value: {serialized!r}"
+    assert sentinel not in serialized, (
+        f"workflow.error leaked task arg value: {serialized!r}"
+    )
 
 
 def test_failed_workflow_dispatch_traceback_does_not_leak_task_arg_values(
@@ -310,7 +333,9 @@ def test_failed_workflow_dispatch_traceback_does_not_leak_task_arg_values(
         tasks=[
             {
                 "task_name": "pulpcore.app.tasks.orphan_cleanup",
-                "task_kwargs": [{"kwarg_key": "orphan_protection_time", "value": 525600}],
+                "task_kwargs": [
+                    {"kwarg_key": "orphan_protection_time", "value": 525600}
+                ],
             },
             {
                 "task_name": "pulpcore.app.tasks.orphan_cleanup",
