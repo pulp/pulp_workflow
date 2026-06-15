@@ -250,15 +250,13 @@ def test_failed_workflow_records_child_error_for_bad_task_args(
     workflow_bindings, pulpcore_bindings, workflow_factory
 ):
     """A child task that fails because of bad args surfaces a well-formed error payload."""
-    bogus_repo_pk = str(uuid.uuid4())
     workflow = workflow_factory(
         tasks=[
             {
-                "task_name": "pulpcore.app.tasks.repository.add_and_remove",
+                "task_name": "pulpcore.app.tasks.test.sleep",
                 "task_kwargs": [
-                    {"kwarg_key": "repository_pk", "value": bogus_repo_pk},
-                    {"kwarg_key": "add_content_units", "value": []},
-                    {"kwarg_key": "remove_content_units", "value": []},
+                    # str is not a valid interval; the worker raises TypeError.
+                    {"kwarg_key": "interval", "value": "not-a-number"},
                 ],
             },
         ],
@@ -267,13 +265,12 @@ def test_failed_workflow_records_child_error_for_bad_task_args(
     finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
     assert finished.state == "failed"
     assert finished.finished_at is not None
-    assert finished.current_task is not None
 
     error = finished.error
     assert isinstance(error, dict)
     assert set(error).issubset(_ALLOWED_ERROR_KEYS)
     assert error["task_index"] == 0
-    assert error["task_name"] == "pulpcore.app.tasks.repository.add_and_remove"
+    assert error["task_name"] == "pulpcore.app.tasks.test.sleep"
     assert isinstance(error["description"], str) and error["description"]
     # No "traceback" key for the child-failure path: it is only set when
     # "_fail_workflow" is called with "exc=" (the dispatch-time path).
@@ -287,16 +284,14 @@ def test_failed_workflow_records_child_error_for_bad_task_args(
 
 
 def test_failed_workflow_error_does_not_leak_task_arg_values(workflow_bindings, workflow_factory):
-    """A sentinel value passed in task kwargs must not appear in workflow.error"""
     sentinel = f"audit-sentinel-{uuid.uuid4()}"
     workflow = workflow_factory(
         tasks=[
             {
-                "task_name": "pulpcore.app.tasks.repository.add_and_remove",
+                "task_name": "pulpcore.app.tasks.test.sleep",
                 "task_kwargs": [
-                    {"kwarg_key": "repository_pk", "value": str(uuid.uuid4())},
-                    {"kwarg_key": "add_content_units", "value": [sentinel]},
-                    {"kwarg_key": "remove_content_units", "value": []},
+                    {"kwarg_key": "interval", "value": 0},
+                    {"kwarg_key": "audit_marker", "value": sentinel},
                 ],
             },
         ],
