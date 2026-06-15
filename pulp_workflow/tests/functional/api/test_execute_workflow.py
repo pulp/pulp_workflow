@@ -247,14 +247,14 @@ _ALLOWED_ERROR_KEYS = {
 
 
 # A test-only task that raises a ``PulpException`` subclass on every call.
-# Using a ``PulpException`` (rather than e.g. ``TypeError`` from bad kwargs)
-# avoids the ``pulpcore.deprecation`` warning that pulpcore logs for any
-# non-pulp exception escaping a task; the CI ``deprecations`` job fails if any
-# such warning is emitted.
+# Using a ``PulpException`` subclass (rather than e.g. ``TypeError`` from bad
+# kwargs) avoids the ``pulpcore.deprecation`` warning that pulpcore logs for
+# any non-``PulpException`` escaping a task; the CI ``deprecations`` job fails
+# if any such warning is emitted.
 _FAILING_TASK = "pulp_workflow.tests.functional.api._failing_tasks.fail_with_validation_error"
 
 
-def test_failed_workflow_records_child_error_for_bad_task_args(
+def test_failed_workflow_records_child_error_when_child_task_fails(
     workflow_bindings, pulpcore_bindings, workflow_factory
 ):
     """A child task that fails surfaces a well-formed error payload."""
