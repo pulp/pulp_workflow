@@ -24,7 +24,7 @@ to run it yourself end-to-end.
 
 ## CLI
 
-If you're using the pulp-cli, be sure to checkout [our pulp-workflow plugin](https://github.com/daviddavis/pulp-cli-workflow).
+If you're using the `pulp-cli`, be sure to check out [our pulp-workflow plugin](https://github.com/daviddavis/pulp-cli-workflow).
 
 ## Endpoints
 
