@@ -1,0 +1,1 @@
+Added `list-callback-services` and `remove-callback-service` management commands for inspecting and removing registered `CallbackService` rows, mirroring pulpcore's `list-signing-services` and `remove-signing-service`.
