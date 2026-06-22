@@ -22,6 +22,10 @@ completion. Watch the [YouTube demo](https://www.youtube.com/watch?v=Cqkh_DUPefY
 for a video walkthrough, or follow the [written demo guide](https://github.com/daviddavis/pulp_workflow/blob/main/docs/demo/README.md)
 to run it yourself end-to-end.
 
+## CLI
+
+If you're using the pulp-cli, be sure to checkout [our pulp-workflow plugin](https://github.com/daviddavis/pulp-cli-workflow).
+
 ## Endpoints
 
 | Method | URL | Description |
