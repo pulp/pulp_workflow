@@ -48,28 +48,26 @@ can be attached to a workflow to run on lifecycle events (`running`,
 fires on any terminal state).
 
 `CallbackService`s can be registered via the API (see
-[Endpoints](#endpoints)) or, for image-bootstrap scenarios where a callback
-needs to exist before the API serves traffic, via the
-`add-callback-service` management command:
+[Endpoints](#endpoints)) or via management commands, which is useful for
+image-bootstrap scenarios where a callback needs to exist before the API
+serves traffic:
 
 ```bash
 pulpcore-manager add-callback-service <name> <script-path>
+pulpcore-manager list-callback-services
+pulpcore-manager remove-callback-service <name>
 ```
 
-The command resolves the script path, runs the same validation as the API
-(absolute path, file exists, executable bit set), and persists the
+`add-callback-service` resolves the script path, runs the same validation as
+the API (absolute path, file exists, executable bit set), and persists the
 `CallbackService` row. Names must be unique within a domain; re-running with
-the same name fails with a clear error rather than silently updating, so
-bootstrap scripts that may run more than once should guard the call:
+the same name fails with a clear error rather than silently updating.
 
-```bash
-existing=$(pulpcore-manager shell -c \
-    "from pulp_workflow.app.models import CallbackService; \
-     print(' '.join(CallbackService.objects.values_list('name', flat=True)))")
-if [[ $existing != *"my-callback"* ]]; then
-    pulpcore-manager add-callback-service my-callback /path/to/script.sh
-fi
-```
+`list-callback-services` takes no arguments and prints each registered
+`CallbackService` name on its own line (empty output when none exist).
+
+`remove-callback-service` deletes the row with the given name, or exits with
+an error if no such row exists.
 
 ## Design
 

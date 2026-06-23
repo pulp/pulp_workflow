@@ -5,6 +5,8 @@ from django.core.exceptions import ValidationError
 from django.core.management import BaseCommand, CommandError
 from django.db.utils import IntegrityError
 
+from pulpcore.plugin.util import get_domain_pk
+
 from pulp_workflow.app.models import CallbackService
 
 
@@ -42,7 +44,9 @@ class Command(BaseCommand):
             raise CommandError(str(e)) from e
 
         try:
-            CallbackService.objects.create(name=name, script=str(script_path))
+            CallbackService.objects.create(
+                pulp_domain_id=get_domain_pk(), name=name, script=str(script_path)
+            )
         except ValidationError as e:
             raise CommandError("; ".join(e.messages)) from e
         except IntegrityError as e:
