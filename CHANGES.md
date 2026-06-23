@@ -8,6 +8,17 @@
 
 [//]: # (towncrier release notes start)
 
+## 0.2.0 (2026-06-23) {: #0.2.0 }
+
+#### Features {: #0.2.0-feature }
+
+- Added a `pulpcore-manager add-callback-service` management command for registering a `CallbackService` from the worker host (mirrors pulpcore's `add-signing-service`). Useful for image bootstrap scripts that need to register a callback before the API serves traffic.
+  [#30](https://github.com/daviddavis/pulp_workflow/issues/30)
+- Added `list-callback-services` and `remove-callback-service` management commands for inspecting and removing registered `CallbackService` rows, mirroring pulpcore's `list-signing-services` and `remove-signing-service`.
+  [#36](https://github.com/daviddavis/pulp_workflow/issues/36)
+
+---
+
 ## 0.1.1 (2026-06-08) {: #0.1.1 }
 
 No significant changes.
