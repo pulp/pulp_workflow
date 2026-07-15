@@ -7,7 +7,7 @@ tasks in Pulp allowing users to:
 * Schedule tasks to run at any given time
 * Run sequences of tasks in a specific order
 * Set up callback services to run on workflow lifecycle events (e.g. running,
-completed, failed, canceled, finished)
+completed, failed, finished)
 
 A `Workflow` owns one or more `WorkflowTask` rows. Each task records the
 `task_name`, `task_args`, `task_kwargs`, and any `reserved_resources` to use
@@ -33,7 +33,11 @@ If you're using the `pulp-cli`, be sure to check out [our pulp-workflow plugin](
 | GET | `/pulp/api/v3/workflow/workflows/` | List workflows |
 | POST | `/pulp/api/v3/workflow/workflows/` | Create a workflow (with tasks) |
 | GET | `/pulp/api/v3/workflow/workflows/<pk>/` | Retrieve a workflow |
-| PATCH | `/pulp/api/v3/workflow/workflows/<pk>/` | Cancel a workflow (body: `{"state": "canceled"}`). Works whether the workflow is `waiting` or `running`; returns 409 only if the workflow is already in a terminal state. Only `"canceled"` is accepted as the target state. |
+| PATCH | `/pulp/api/v3/workflow/workflows/<pk>/` | Stop a workflow (body: `{"state": "canceled"}`). Removes the workflow's schedule so no further runs are created and cancels any of its runs still in progress. Idempotent: always returns 200. Only `"canceled"` is accepted as the target state. |
+| GET | `/pulp/api/v3/workflow/workflow-runs/` | List all runs across every workflow (filter by `workflow` to scope to a single workflow's run history). A flat convenience collection; each run's `pulp_href` points to its canonical nested URL below. |
+| GET | `/pulp/api/v3/workflow/workflows/<workflow_pk>/runs/` | List a workflow's runs |
+| GET | `/pulp/api/v3/workflow/workflows/<workflow_pk>/runs/<pk>/` | Retrieve a workflow run |
+| PATCH | `/pulp/api/v3/workflow/workflows/<workflow_pk>/runs/<pk>/` | Cancel a workflow run (body: `{"state": "canceled"}`). Works while the run is `waiting` or `running`; returns 409 if the run is already in a terminal state. Only `"canceled"` is accepted as the target state. |
 | GET | `/pulp/api/v3/workflow/callback-services/` | List callback services |
 | POST | `/pulp/api/v3/workflow/callback-services/` | Register a callback service (an executable on the worker host) |
 | GET | `/pulp/api/v3/workflow/callback-services/<pk>/` | Retrieve a callback service |
@@ -44,8 +48,9 @@ If you're using the `pulp-cli`, be sure to check out [our pulp-workflow plugin](
 
 A `CallbackService` is a registered executable on the Pulp worker host that
 can be attached to a workflow to run on lifecycle events (`running`,
-`completed`, `failed`, `canceled`, or the synthetic `finished` event that
-fires on any terminal state).
+`completed`, `failed`, or the synthetic `finished` event that fires on any
+non-canceled terminal state). Callbacks are not currently supported for
+cancellation.
 
 `CallbackService`s can be registered via the API (see
 [Endpoints](#endpoints)) or via management commands, which is useful for

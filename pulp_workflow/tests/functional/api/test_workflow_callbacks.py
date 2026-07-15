@@ -7,14 +7,11 @@ script via environment variables; the test sets a ``email=user@example.com`` lab
 the ``PULP_WORKFLOW_LABEL_EMAIL`` path.
 """
 
-import time
 import uuid
 
 import pytest
 
 from pulpcore.plugin.util import extract_pk
-
-POLL_INTERVAL_SECONDS = 2.0
 
 
 def test_workflow_with_callback_on_sync(
@@ -72,91 +69,41 @@ def test_workflow_with_callback_on_sync(
         ],
     )
 
-    finished = monitor_workflow(workflow.pulp_href)
+    run = monitor_workflow(workflow.pulp_href)
 
-    # ---- Workflow-level assertions.
-    assert finished.pulp_labels == {"email": "user@example.com"}
-    assert len(finished.tasks) == 1
+    # ---- Workflow-level assertions (read the definition).
+    wf = workflow_bindings.WorkflowsApi.read(workflow.pulp_href)
+    assert wf.pulp_labels == {"email": "user@example.com"}
+    assert len(wf.tasks) == 1
 
-    # ---- The sync task itself ran.
-    sync_task = pulpcore_bindings.TasksApi.read(finished.tasks[0].dispatched_task)
+    # ---- The sync task itself ran (find it in the run's TaskGroup by name).
+    assert run.task_group is not None
+    task_group = pulpcore_bindings.TaskGroupsApi.read(run.task_group)
+    group_tasks = [pulpcore_bindings.TasksApi.read(t.pulp_href) for t in task_group.tasks]
+    sync_task = next(
+        t for t in group_tasks if t.name == "pulp_file.app.tasks.synchronizing.synchronize"
+    )
     assert sync_task.state == "completed"
-    assert sync_task.name == "pulp_file.app.tasks.synchronizing.synchronize"
 
     # ---- Both callbacks fired and completed.
-    assert len(finished.callbacks) == 2
-    callback_types = sorted(cb.callback_type for cb in finished.callbacks)
+    assert len(wf.callbacks) == 2
+    callback_types = sorted(cb.callback_type for cb in wf.callbacks)
     assert callback_types == ["completed", "finished"]
-    for cb in finished.callbacks:
+    for cb in wf.callbacks:
         assert cb.callback_service == callback_service.pulp_href, (
             f"Unexpected callback_service: {cb.callback_service!r}"
         )
+
+    # ---- The run records its own dispatched callback tasks.
+    run = workflow_bindings.WorkflowRunsApi.read(run.pulp_href)
+    assert len(run.callbacks) == 2
+    assert sorted(cb.callback_type for cb in run.callbacks) == ["completed", "finished"]
+    for cb in run.callbacks:
+        assert cb.callback_service == callback_service.pulp_href
         assert cb.dispatched_task is not None, f"Callback {cb.callback_type} was not dispatched"
         # monitor_task raises PulpTaskError if the task ends in any non-completed state.
         cb_task = monitor_task(cb.dispatched_task)
         assert cb_task.name == "pulp_workflow.app.tasks.run_callback"
-
-
-def test_workflow_callback_fires_on_cancel(
-    workflow_bindings,
-    pulpcore_bindings,
-    workflow_factory,
-    callback_service_factory,
-    monitor_task,
-):
-    """A canceled-before-start workflow fires its CANCELED + FINISHED callbacks."""
-    from datetime import datetime, timedelta, timezone
-
-    callback_service = callback_service_factory(script="/bin/echo")
-
-    # Schedule far enough in the future that we can cancel before it starts.
-    start_time = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-    workflow = workflow_factory(
-        start_time=start_time,
-        callbacks=[
-            {
-                "callback_service": callback_service.pulp_href,
-                "callback_type": "canceled",
-            },
-            {
-                "callback_service": callback_service.pulp_href,
-                "callback_type": "finished",
-            },
-            # 'completed' should NOT fire when the workflow is canceled.
-            {
-                "callback_service": callback_service.pulp_href,
-                "callback_type": "completed",
-            },
-        ],
-    )
-
-    canceled = workflow_bindings.WorkflowsApi.workflows_cancel(
-        workflow.pulp_href, {"state": "canceled"}
-    )
-    assert canceled.state == "canceled"
-
-    # Re-fetch so we see the dispatched_task hrefs the cancel set asynchronously.
-    fired_types = set()
-    deadline = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        latest = workflow_bindings.WorkflowsApi.read(workflow.pulp_href)
-        fired_types = {cb.callback_type for cb in latest.callbacks if cb.dispatched_task}
-        if {"canceled", "finished"}.issubset(fired_types):
-            break
-        time.sleep(POLL_INTERVAL_SECONDS)
-
-    assert {"canceled", "finished"}.issubset(fired_types), (
-        f"Expected canceled+finished callbacks to fire, only fired: {fired_types}"
-    )
-    # The 'completed' callback must not have fired.
-    completed_cb = next(cb for cb in latest.callbacks if cb.callback_type == "completed")
-    assert completed_cb.dispatched_task is None
-
-    # The fired callbacks should run to completion.
-    for cb in latest.callbacks:
-        if not cb.dispatched_task:
-            continue
-        monitor_task(cb.dispatched_task)
 
 
 def test_workflow_callback_duplicate_type_rejected(workflow_bindings, callback_service_factory):

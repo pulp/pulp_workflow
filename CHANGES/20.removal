@@ -1,0 +1,3 @@
+Moved per-execution state off of the `Workflow` resource. The `state`, `started_at`,
+`finished_at`, `error`, `current_task`, and `task_group` fields now live on the new
+`WorkflowRun` resource. Support for workflow cancellation callbacks has also been removed for now.

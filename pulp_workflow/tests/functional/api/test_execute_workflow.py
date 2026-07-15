@@ -22,15 +22,21 @@ from pulp_workflow.pytest_plugin import (
 )
 
 
-def _wait_for_workflow(api, workflow_href, timeout=WORKFLOW_TIMEOUT):
-    """Poll a Workflow until it reaches a final state."""
+def _latest_run(workflow_bindings, workflow_href):
+    """Return the newest WorkflowRun for a workflow, or None if none exist yet."""
+    runs = workflow_bindings.WorkflowRunsApi.list(workflow_href).results
+    return runs[0] if runs else None
+
+
+def _wait_for_run(workflow_bindings, workflow_href, timeout=WORKFLOW_TIMEOUT):
+    """Poll a Workflow's latest run until it reaches a final state."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        workflow = api.read(workflow_href)
-        if workflow.state in WORKFLOW_FINAL_STATES:
-            return workflow
+        run = _latest_run(workflow_bindings, workflow_href)
+        if run is not None and run.state in WORKFLOW_FINAL_STATES:
+            return run
         time.sleep(WORKFLOW_SLEEP_TIME)
-    raise AssertionError(f"Workflow {workflow_href} did not finish within {timeout}s")
+    raise AssertionError(f"Workflow {workflow_href} run did not finish within {timeout}s")
 
 
 def test_execute_workflow_add_content_and_publish(
@@ -79,40 +85,38 @@ def test_execute_workflow_add_content_and_publish(
         ],
     )
 
-    finished = monitor_workflow(workflow.pulp_href)
+    run = monitor_workflow(workflow.pulp_href)
 
-    # ---- Workflow-level assertions.
-    assert finished.error is None
-    assert finished.started_at is not None
-    assert finished.finished_at is not None
-    assert finished.finished_at >= finished.started_at
-    assert finished.current_task is None
-    assert len(finished.tasks) == 2
+    # ---- Run-level assertions.
+    assert run.error is None
+    assert run.started_at is not None
+    assert run.finished_at is not None
+    assert run.finished_at >= run.started_at
+    assert run.current_task is None
+
+    # ---- The workflow definition still lists its two tasks.
+    wf = workflow_bindings.WorkflowsApi.read(workflow.pulp_href)
+    assert len(wf.tasks) == 2
 
     # ---- TaskGroup membership and dispatched state.
-    assert finished.task_group is not None
-    task_group = pulpcore_bindings.TaskGroupsApi.read(finished.task_group)
+    assert run.task_group is not None
+    task_group = pulpcore_bindings.TaskGroupsApi.read(run.task_group)
     assert task_group.all_tasks_dispatched is True
     group_task_hrefs = {t.pulp_href for t in task_group.tasks}
-    # Every child task is in the group.
-    assert finished.tasks[0].dispatched_task in group_task_hrefs
-    assert finished.tasks[1].dispatched_task in group_task_hrefs
-    # The execute_workflow continuations are also in the group: 1 per step + 1 final.
-    # (2 child tasks + at least 2 execute_workflow continuations.)
+    # The run dispatches 2 child tasks plus at least 2 execute_workflow continuations.
     assert len(group_task_hrefs) >= 4
 
-    task0, task1 = finished.tasks[0], finished.tasks[1]
-    assert task0.dispatched_task is not None
-    assert task1.dispatched_task is not None
+    # ---- Locate each step's child task within the group by task name.
+    group_tasks = [pulpcore_bindings.TasksApi.read(href) for href in group_task_hrefs]
+    task0_task = next(
+        t for t in group_tasks if t.name == "pulpcore.app.tasks.repository.add_and_remove"
+    )
+    task1_task = next(t for t in group_tasks if t.name == "pulp_file.app.tasks.publish")
 
     # ---- Each task's child task ran with the right resource.
-    task0_task = pulpcore_bindings.TasksApi.read(task0.dispatched_task)
-    task1_task = pulpcore_bindings.TasksApi.read(task1.dispatched_task)
     assert task0_task.state == "completed"
-    assert task0_task.name == "pulpcore.app.tasks.repository.add_and_remove"
     assert repo.pulp_href in (task0_task.reserved_resources_record or [])
     assert task1_task.state == "completed"
-    assert task1_task.name == "pulp_file.app.tasks.publish"
     assert repo.pulp_href in (task1_task.reserved_resources_record or [])
 
     # Each step is dispatched by its own execute_workflow continuation, so each
@@ -141,14 +145,16 @@ def test_execute_workflow_add_content_and_publish(
     assert publication.manifest == "PULP_MANIFEST"
 
 
-def _wait_for_state(api, workflow_href, predicate, timeout):
+def _wait_for_run_state(workflow_bindings, workflow_href, predicate, timeout):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        workflow = api.read(workflow_href)
-        if predicate(workflow):
-            return workflow
+        run = _latest_run(workflow_bindings, workflow_href)
+        if run is not None and predicate(run):
+            return run
         time.sleep(0.5)
-    raise AssertionError(f"Workflow {workflow_href} did not satisfy predicate within {timeout}s")
+    raise AssertionError(
+        f"Workflow {workflow_href} run did not satisfy predicate within {timeout}s"
+    )
 
 
 def _many_orphan_cleanup_tasks(n):
@@ -172,27 +178,25 @@ def _many_sleep_tasks(n, seconds=15):
 
 
 def test_cancel_running_workflow_via_patch(workflow_bindings, pulpcore_bindings, workflow_factory):
-    """A RUNNING workflow can be canceled via PATCH; in-flight tasks are canceled."""
+    """A RUNNING workflow can be stopped via PATCH; its in-flight run is canceled."""
     workflow = workflow_factory(tasks=_many_sleep_tasks(15))
 
-    running = _wait_for_state(
-        workflow_bindings.WorkflowsApi,
+    running = _wait_for_run_state(
+        workflow_bindings,
         workflow.pulp_href,
-        lambda w: w.state in {"running", "completed", "failed", "canceled"},
+        lambda r: r.state in {"running", "completed", "failed", "canceled"},
         timeout=60,
     )
-    # If the workflow happened to finish before we could observe RUNNING, the test
+    # If the run happened to finish before we could observe RUNNING, the test
     # is meaningless; require it to actually have entered RUNNING.
-    assert running.state == "running", f"workflow finished too quickly: state={running.state!r}"
+    assert running.state == "running", f"run finished too quickly: state={running.state!r}"
 
-    canceled = workflow_bindings.WorkflowsApi.workflows_cancel(
-        workflow.pulp_href, {"state": "canceled"}
-    )
-    assert canceled.state == "canceled"
-    assert canceled.finished_at is not None
+    # Stopping the workflow cancels its in-flight run.
+    workflow_bindings.WorkflowsApi.workflows_cancel(workflow.pulp_href, {"state": "canceled"})
 
-    finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
+    finished = _wait_for_run(workflow_bindings, workflow.pulp_href)
     assert finished.state == "canceled"
+    assert finished.finished_at is not None
     assert finished.task_group is not None
 
     task_group = pulpcore_bindings.TaskGroupsApi.read(finished.task_group)
@@ -206,33 +210,35 @@ def test_cancel_running_workflow_via_patch(workflow_bindings, pulpcore_bindings,
 def test_cancel_running_workflow_via_task_group(
     workflow_bindings, pulpcore_bindings, workflow_factory
 ):
-    """Canceling the underlying TaskGroup propagates CANCELED to the Workflow."""
+    """Canceling the underlying TaskGroup propagates CANCELED to the WorkflowRun."""
     workflow = workflow_factory(tasks=_many_sleep_tasks(15))
 
-    running = _wait_for_state(
-        workflow_bindings.WorkflowsApi,
+    running = _wait_for_run_state(
+        workflow_bindings,
         workflow.pulp_href,
-        lambda w: w.state in {"running", "completed", "failed", "canceled"},
+        lambda r: r.state in {"running", "completed", "failed", "canceled"},
         timeout=60,
     )
-    assert running.state == "running", f"workflow finished too quickly: state={running.state!r}"
+    assert running.state == "running", f"run finished too quickly: state={running.state!r}"
     assert running.task_group is not None
 
     pulpcore_bindings.TaskGroupsApi.task_groups_cancel(running.task_group, {"state": "canceled"})
 
-    finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
+    finished = _wait_for_run(workflow_bindings, workflow.pulp_href)
     assert finished.state == "canceled"
     assert finished.finished_at is not None
 
 
 def test_cancel_terminal_workflow_returns_409(workflow_bindings, workflow_factory):
-    """Canceling an already-terminal workflow returns 409 Conflict."""
+    """Canceling an already-terminal run returns 409 Conflict."""
     workflow = workflow_factory(tasks=_many_orphan_cleanup_tasks(2))
-    finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
+    finished = _wait_for_run(workflow_bindings, workflow.pulp_href)
     assert finished.state == "completed"
 
     with pytest.raises(workflow_bindings.ApiException) as exc:
-        workflow_bindings.WorkflowsApi.workflows_cancel(workflow.pulp_href, {"state": "canceled"})
+        workflow_bindings.WorkflowRunsApi.workflow_runs_cancel(
+            finished.pulp_href, {"state": "canceled"}
+        )
     assert exc.value.status == 409
 
 
@@ -269,7 +275,7 @@ def test_failed_workflow_records_child_error_when_child_task_fails(
         ],
     )
 
-    finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
+    finished = _wait_for_run(workflow_bindings, workflow.pulp_href)
     assert finished.state == "failed"
     assert finished.finished_at is not None
 
@@ -283,9 +289,11 @@ def test_failed_workflow_records_child_error_when_child_task_fails(
     # "_fail_workflow" is called with "exc=" (the dispatch-time path).
     assert "traceback" not in error
 
-    child_task_href = finished.tasks[0].dispatched_task
-    assert child_task_href is not None
-    child_task = pulpcore_bindings.TasksApi.read(child_task_href)
+    # The failing child task is a member of the run's TaskGroup.
+    assert finished.task_group is not None
+    task_group = pulpcore_bindings.TaskGroupsApi.read(finished.task_group)
+    group_tasks = [pulpcore_bindings.TasksApi.read(t.pulp_href) for t in task_group.tasks]
+    child_task = next(t for t in group_tasks if t.name == _FAILING_TASK)
     assert child_task.state == "failed"
     assert error["child_error"] == child_task.error
 
@@ -303,7 +311,7 @@ def test_failed_workflow_error_does_not_leak_task_arg_values(workflow_bindings, 
         ],
     )
 
-    finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
+    finished = _wait_for_run(workflow_bindings, workflow.pulp_href)
     assert finished.state == "failed"
     serialized = json.dumps(finished.error, default=str)
     assert sentinel not in serialized, f"workflow.error leaked task arg value: {serialized!r}"
@@ -332,7 +340,7 @@ def test_failed_workflow_dispatch_traceback_does_not_leak_task_arg_values(
         ],
     )
 
-    finished = _wait_for_workflow(workflow_bindings.WorkflowsApi, workflow.pulp_href)
+    finished = _wait_for_run(workflow_bindings, workflow.pulp_href)
     assert finished.state == "failed"
 
     error = finished.error

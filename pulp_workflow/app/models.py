@@ -3,31 +3,33 @@ import json
 import os
 import re
 import subprocess
+from functools import cached_property
 from gettext import gettext as _
 
 from django.conf import settings
 from django.contrib.postgres.fields import ArrayField, HStoreField
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import models
+from django.db.models.functions import Cast, Concat
 from django.utils import timezone
 from django_guid import get_guid
 
 from pulpcore.plugin.constants import TASK_CHOICES, TASK_STATES
-from pulpcore.plugin.models import BaseModel, EncryptedJSONField
+from pulpcore.plugin.models import BaseModel, EncryptedJSONField, TaskSchedule
 from pulpcore.plugin.util import get_domain_pk
 
 
 # ---------------------------------------------------------------------------
 # Callback type constants. These are the events on which a CallbackService can be triggered.
 # The first set mirror Workflow lifecycle states; ``FINISHED`` is a synthetic type that fires on
-# any terminal state (completed, failed, canceled).
+# any non-canceled terminal state (completed, failed). Callbacks are not currently supported for
+# cancellation.
 # ---------------------------------------------------------------------------
 class CALLBACK_TYPES:  # noqa: N801 - mirror pulpcore.constants style (TASK_STATES, ...)
     RUNNING = TASK_STATES.RUNNING
     COMPLETED = TASK_STATES.COMPLETED
     FAILED = TASK_STATES.FAILED
-    CANCELED = TASK_STATES.CANCELED
-    # Wildcard: fires on any terminal state.
+    # Wildcard: fires on any non-canceled terminal state.
     FINISHED = "finished"
 
 
@@ -35,17 +37,16 @@ CALLBACK_TYPE_CHOICES = (
     (CALLBACK_TYPES.RUNNING, "Running"),
     (CALLBACK_TYPES.COMPLETED, "Completed"),
     (CALLBACK_TYPES.FAILED, "Failed"),
-    (CALLBACK_TYPES.CANCELED, "Canceled"),
     (CALLBACK_TYPES.FINISHED, "Finished"),
 )
 
 # Map a workflow state transition to the set of callback types that should fire. The key is the
 # workflow's new state; the value is the tuple of CallbackService callback_type values to dispatch.
+# Cancellation is intentionally absent: callbacks are not currently supported for cancellation.
 TRANSITION_CALLBACK_TYPES = {
     TASK_STATES.RUNNING: (CALLBACK_TYPES.RUNNING,),
     TASK_STATES.COMPLETED: (CALLBACK_TYPES.COMPLETED, CALLBACK_TYPES.FINISHED),
     TASK_STATES.FAILED: (CALLBACK_TYPES.FAILED, CALLBACK_TYPES.FINISHED),
-    TASK_STATES.CANCELED: (CALLBACK_TYPES.CANCELED, CALLBACK_TYPES.FINISHED),
 }
 
 # Env var keys must be POSIX-portable: [A-Z_][A-Z0-9_]*. Sanitize label keys to fit that shape
@@ -59,37 +60,127 @@ ALLOWED_CALLBACK_FIELDS = frozenset({"pk", "name", "state", "labels"})
 
 class Workflow(BaseModel):
     """
-    A named, ordered pipeline of tasks executed sequentially.
+    A named, ordered pipeline of tasks, and the schedule on which it runs.
+
+    A ``Workflow`` is a *definition*: it owns the ordered ``WorkflowTask`` rows, any
+    lifecycle ``callbacks``, and the schedule (``start_time`` / ``dispatch_interval``).
+    Each actual execution is recorded as a separate :class:`WorkflowRun`, so a single
+    workflow may accumulate a history of runs.
+
+    On creation a pulpcore ``TaskSchedule`` is registered that dispatches
+    ``start_workflow_run`` at ``start_time``. When ``dispatch_interval`` is null the
+    schedule fires exactly once; when it is set the schedule fires repeatedly on that
+    interval, creating a new ``WorkflowRun`` each time.
 
     Fields:
         name (models.TextField): Unique name of the workflow.
         pulp_labels (HStoreField): Dictionary of string values.
-        state (models.TextField): Current state of the workflow, drawn from
-            ``pulpcore.constants.TASK_STATES``.
-        start_time (models.DateTimeField): When the workflow should start executing.
-            A pulpcore TaskSchedule is created at this time to dispatch the
-            ``execute_workflow`` task.
-        started_at (models.DateTimeField): When the first task was dispatched.
-        finished_at (models.DateTimeField): When the workflow reached a terminal state.
-        error (models.JSONField): Fatal error info, populated from a failing task.
+        start_time (models.DateTimeField): When the workflow should first run.
+        dispatch_interval (models.DurationField): If set, the interval on which the
+            workflow re-runs. If null, the workflow runs once at ``start_time``.
 
     Relations:
         pulp_domain (models.ForeignKey): Domain the workflow belongs to.
-        current_task (models.ForeignKey): The task currently in progress (if any).
-        task_group (models.ForeignKey): The pulpcore TaskGroup for all tasks of this workflow.
     """
+
+    # Derived status values (computed from the backing TaskSchedule; see ``status``).
+    STATUS_SCHEDULED = "scheduled"
+    STATUS_COMPLETED = "completed"
+    STATUS_CANCELED = "canceled"
 
     name = models.TextField(unique=True)
     pulp_labels = HStoreField(default=dict)
-    state = models.TextField(choices=TASK_CHOICES, default=TASK_STATES.WAITING)
     start_time = models.DateTimeField(default=timezone.now)
+    dispatch_interval = models.DurationField(null=True)
+
+    pulp_domain = models.ForeignKey("core.Domain", default=get_domain_pk, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return "Workflow: {name}".format(name=self.name)
+
+    @staticmethod
+    def _schedule_subquery():
+        name = Concat(
+            models.Value("pulp_workflow.workflow:"),
+            Cast(models.OuterRef("pk"), models.TextField()),
+        )
+        return TaskSchedule.objects.filter(name=name)
+
+    @classmethod
+    def annotate_schedule(cls, queryset):
+        # Bulk-load schedule state so list endpoints avoid an N+1 against core.TaskSchedule.
+        sched = cls._schedule_subquery()
+        return queryset.annotate(
+            _schedule_exists=models.Exists(sched),
+            _schedule_next_dispatch=models.Subquery(sched.values("next_dispatch")[:1]),
+        )
+
+    @cached_property
+    def task_schedule(self):
+        return TaskSchedule.objects.filter(name=f"pulp_workflow.workflow:{self.pk}").first()
+
+    @property
+    def next_dispatch(self):
+        if hasattr(self, "_schedule_exists"):
+            return self._schedule_next_dispatch
+        schedule = self.task_schedule
+        return schedule.next_dispatch if schedule else None
+
+    @property
+    def status(self):
+        if hasattr(self, "_schedule_exists"):
+            exists, next_dispatch = self._schedule_exists, self._schedule_next_dispatch
+        else:
+            schedule = self.task_schedule
+            exists = schedule is not None
+            next_dispatch = schedule.next_dispatch if schedule else None
+        if not exists:
+            return self.STATUS_CANCELED
+        if next_dispatch is None:
+            return self.STATUS_COMPLETED
+        return self.STATUS_SCHEDULED
+
+    class Meta:
+        default_permissions = ("add", "change", "view")
+        permissions = [
+            ("manage_roles_workflow", "Can manage role assignments on workflows"),
+        ]
+
+
+class WorkflowRun(BaseModel):
+    """
+    A single execution of a :class:`Workflow`.
+
+    Each time a workflow's schedule fires, a ``WorkflowRun`` is created to track that
+    execution's state independently of the workflow definition and of any other run.
+    This lets a periodic workflow keep a full history of its runs. A new run is only
+    started when the workflow has no unfinished run, so runs of the same workflow do
+    not overlap.
+
+    Fields:
+        state (models.TextField): Current state of the run, drawn from
+            ``pulpcore.constants.TASK_STATES``.
+        started_at (models.DateTimeField): When the first task was dispatched.
+        finished_at (models.DateTimeField): When the run reached a terminal state.
+        error (models.JSONField): Fatal error info, populated from a failing task.
+
+    Relations:
+        workflow (models.ForeignKey): The workflow this run executes.
+        pulp_domain (models.ForeignKey): Domain the run belongs to.
+        current_task (models.ForeignKey): The pulpcore Task most recently dispatched
+            for this run (if any).
+        task_group (models.ForeignKey): The pulpcore TaskGroup for all tasks of this run.
+    """
+
+    workflow = models.ForeignKey(Workflow, related_name="runs", on_delete=models.CASCADE)
+    pulp_domain = models.ForeignKey("core.Domain", default=get_domain_pk, on_delete=models.CASCADE)
+    state = models.TextField(choices=TASK_CHOICES, default=TASK_STATES.WAITING)
     started_at = models.DateTimeField(null=True)
     finished_at = models.DateTimeField(null=True)
     error = models.JSONField(null=True)
 
-    pulp_domain = models.ForeignKey("core.Domain", default=get_domain_pk, on_delete=models.CASCADE)
     current_task = models.ForeignKey(
-        "WorkflowTask",
+        "core.Task",
         null=True,
         related_name="+",
         on_delete=models.SET_NULL,
@@ -102,13 +193,10 @@ class Workflow(BaseModel):
     )
 
     def __str__(self):
-        return "Workflow: {name} [{state}]".format(name=self.name, state=self.state)
+        return "WorkflowRun: {name} [{state}]".format(name=self.workflow.name, state=self.state)
 
     class Meta:
-        default_permissions = ("add", "change", "view")
-        permissions = [
-            ("manage_roles_workflow", "Can manage role assignments on workflows"),
-        ]
+        ordering = ("-pulp_created",)
 
 
 class WorkflowTask(BaseModel):
@@ -122,12 +210,6 @@ class WorkflowTask(BaseModel):
     index = models.PositiveIntegerField()
     task_name = models.TextField()
     reserved_resources = ArrayField(models.TextField(), null=True)
-    dispatched_task = models.ForeignKey(
-        "core.Task",
-        null=True,
-        related_name="+",
-        on_delete=models.SET_NULL,
-    )
 
     def __str__(self):
         return f"WorkflowTask: {self.workflow.name}[{self.index}] {self.task_name}"
@@ -247,8 +329,13 @@ class CallbackService(BaseModel):
     def __str__(self):
         return f"CallbackService: {self.name}"
 
-    def _env(self, workflow, env_vars=None):
-        """Build the env dict passed to the script. Honors ``WORKFLOW_CALLBACK_FIELDS``."""
+    def _env(self, run, env_vars=None):
+        """Build the env dict passed to the script. Honors ``WORKFLOW_CALLBACK_FIELDS``.
+
+        ``run`` is a :class:`WorkflowRun`; the exposed ``state`` reflects the run, while
+        ``pk``/``name``/``labels`` reflect the owning workflow definition.
+        """
+        workflow = run.workflow
         guid = get_guid()
         env = {"CORRELATION_ID": guid if guid else ""}
 
@@ -282,7 +369,7 @@ class CallbackService(BaseModel):
         if "name" in scalar_fields:
             env["PULP_WORKFLOW_NAME"] = workflow.name
         if "state" in scalar_fields:
-            env["PULP_WORKFLOW_STATE"] = workflow.state
+            env["PULP_WORKFLOW_STATE"] = run.state
         if expose_all_labels or label_keys:
             labels = workflow.pulp_labels or {}
             if expose_all_labels:
@@ -299,15 +386,15 @@ class CallbackService(BaseModel):
         # Inherit the worker's environment so PATH, etc. work in the script.
         return {**os.environ, **env}
 
-    def run(self, workflow, env_vars=None):
-        """Run the script synchronously with workflow context.
+    def run(self, run, env_vars=None):
+        """Run the script synchronously with workflow-run context.
 
         Returns a dict with ``returncode``, ``stdout`` and ``stderr``. Raises ``RuntimeError`` on a
         non-zero exit so the surrounding task records the failure.
         """
         completed = subprocess.run(
             [self.script],
-            env=self._env(workflow, env_vars=env_vars),
+            env=self._env(run, env_vars=env_vars),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -324,11 +411,11 @@ class CallbackService(BaseModel):
             )
         return result
 
-    async def arun(self, workflow, env_vars=None):
+    async def arun(self, run, env_vars=None):
         """Async equivalent of :meth:`run`."""
         process = await asyncio.create_subprocess_exec(
             self.script,
-            env=self._env(workflow, env_vars=env_vars),
+            env=self._env(run, env_vars=env_vars),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -384,10 +471,9 @@ class WorkflowCallback(BaseModel):
     Attaches a ``CallbackService`` to a ``Workflow`` for a specific lifecycle event.
 
     A workflow may have any number of callbacks, but each
-    ``(workflow, callback_service, callback_type)`` triple is unique. When the workflow reaches the
-    event named by ``callback_type``, a Pulp task is dispatched that runs the service; the
-    dispatched task is recorded on ``dispatched_task`` so callers can inspect its result via the
-    API.
+    ``(workflow, callback_service, callback_type)`` triple is unique. When a run of the workflow
+    reaches the event named by ``callback_type``, a Pulp task is dispatched that runs the service;
+    the dispatched task is recorded per run on :class:`WorkflowRunCallback`.
     """
 
     workflow = models.ForeignKey(Workflow, related_name="callbacks", on_delete=models.CASCADE)
@@ -395,12 +481,6 @@ class WorkflowCallback(BaseModel):
         CallbackService, related_name="workflow_callbacks", on_delete=models.PROTECT
     )
     callback_type = models.TextField(choices=CALLBACK_TYPE_CHOICES)
-    dispatched_task = models.ForeignKey(
-        "core.Task",
-        null=True,
-        related_name="+",
-        on_delete=models.SET_NULL,
-    )
 
     def __str__(self):
         return (
@@ -410,3 +490,27 @@ class WorkflowCallback(BaseModel):
 
     class Meta:
         unique_together = ("workflow", "callback_service", "callback_type")
+
+
+class WorkflowRunCallback(BaseModel):
+    """The callback task dispatched for one :class:`WorkflowRun`.
+
+    Each run gets its own row per fired :class:`WorkflowCallback`, so a periodic workflow's runs
+    each retain their own ``dispatched_task`` instead of sharing one on the workflow definition.
+    """
+
+    workflow_run = models.ForeignKey(
+        WorkflowRun, related_name="callbacks", on_delete=models.CASCADE
+    )
+    workflow_callback = models.ForeignKey(
+        WorkflowCallback, related_name="run_callbacks", on_delete=models.CASCADE
+    )
+    dispatched_task = models.ForeignKey(
+        "core.Task",
+        null=True,
+        related_name="+",
+        on_delete=models.SET_NULL,
+    )
+
+    class Meta:
+        unique_together = ("workflow_run", "workflow_callback")

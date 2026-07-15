@@ -26,15 +26,9 @@ def test_create_workflow(workflow_bindings, workflow_factory):
     )
     assert workflow.name == name
     assert workflow.pulp_href is not None
-    assert workflow.state == "waiting"
-    assert workflow.started_at is None
-    assert workflow.finished_at is None
-    assert workflow.error is None
-    assert workflow.current_task is None
     assert len(workflow.tasks) == 2
     assert workflow.tasks[0].index == 0
     assert workflow.tasks[0].task_name == "pulpcore.app.tasks.orphan_cleanup"
-    assert workflow.tasks[0].dispatched_task is None
     assert workflow.tasks[1].index == 1
 
 
@@ -94,9 +88,6 @@ def test_list_workflows(workflow_bindings, workflow_factory):
     assert results.count == 1
     assert results.results[0].name == name
 
-    results = workflow_bindings.WorkflowsApi.list(state="waiting")
-    assert results.count >= 1
-
 
 @pytest.mark.parallel
 def test_list_workflows_extra_filters(workflow_bindings, workflow_factory):
@@ -126,30 +117,26 @@ def test_delete_workflow_not_supported(workflow_bindings):
 
 
 @pytest.mark.parallel
-def test_cancel_workflow(workflow_bindings, pulpcore_bindings, workflow_factory):
-    """A waiting Workflow can be canceled and reaches the canceled state."""
+def test_cancel_workflow(workflow_bindings, workflow_runs, workflow_factory):
+    """Stopping a waiting Workflow removes its schedule and records no run."""
     # Schedule the workflow far enough in the future that it cannot start before
     # the cancel request is processed.
     from datetime import datetime, timedelta, timezone
 
     start_time = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     workflow = workflow_factory(start_time=start_time)
-    assert workflow.state == "waiting"
+    assert workflow_runs(workflow.pulp_href) == []
 
-    canceled = workflow_bindings.WorkflowsApi.workflows_cancel(
-        workflow.pulp_href, {"state": "canceled"}
-    )
-    assert canceled.state == "canceled"
-    assert canceled.finished_at is not None
+    # Stopping a workflow removes its schedule and is idempotent (always 200).
+    workflow_bindings.WorkflowsApi.workflows_cancel(workflow.pulp_href, {"state": "canceled"})
+    workflow_bindings.WorkflowsApi.workflows_cancel(workflow.pulp_href, {"state": "canceled"})
 
-    # The workflow is still readable in the canceled state.
+    # The workflow definition is still readable.
     fetched = workflow_bindings.WorkflowsApi.read(workflow.pulp_href)
-    assert fetched.state == "canceled"
+    assert fetched.pulp_href == workflow.pulp_href
 
-    # Cancelling flips the workflow's TaskGroup to all_tasks_dispatched=True.
-    assert fetched.task_group is not None
-    task_group = pulpcore_bindings.TaskGroupsApi.read(fetched.task_group)
-    assert task_group.all_tasks_dispatched is True
+    # Stopping a never-started workflow simply removes the schedule; no WorkflowRun is recorded.
+    assert workflow_runs(workflow.pulp_href) == []
 
 
 @pytest.mark.parallel

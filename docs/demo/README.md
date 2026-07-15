@@ -101,17 +101,21 @@ echo "WF_HREF=$WF_HREF"
 ## 5. Watch it run
 
 ```bash
+RUN_HREF=""
 while :; do
-    STATE=$(http :5001"$WF_HREF" | jq -r .state)
+    if [ -z "$RUN_HREF" ]; then
+        RUN_HREF=$(http :5001"$WF_HREF"runs/ | jq -r '.results[0].pulp_href // empty')
+        [ -z "$RUN_HREF" ] && sleep 2 && continue
+    fi
+    STATE=$(http :5001"$RUN_HREF" | jq -r .state)
     echo "state=$STATE"
     case "$STATE" in
-        completed|failed|canceled) break ;;
+        completed|failed|canceled|skipped) break ;;
     esac
     sleep 2
 done
 
-http :5001"$WF_HREF" | jq '{state, started_at, finished_at, error,
-    tasks: [.tasks[] | {task_name, dispatched_task}],
+http :5001"$RUN_HREF" | jq '{state, started_at, finished_at, error,
     callbacks: [.callbacks[] | {callback_type, dispatched_task}]}'
 ```
 
