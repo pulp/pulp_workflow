@@ -13,9 +13,9 @@
 #### Features {: #0.2.0-feature }
 
 - Added a `pulpcore-manager add-callback-service` management command for registering a `CallbackService` from the worker host (mirrors pulpcore's `add-signing-service`). Useful for image bootstrap scripts that need to register a callback before the API serves traffic.
-  [#30](https://github.com/daviddavis/pulp_workflow/issues/30)
+  [#30](https://github.com/pulp/pulp_workflow/issues/30)
 - Added `list-callback-services` and `remove-callback-service` management commands for inspecting and removing registered `CallbackService` rows, mirroring pulpcore's `list-signing-services` and `remove-signing-service`.
-  [#36](https://github.com/daviddavis/pulp_workflow/issues/36)
+  [#36](https://github.com/pulp/pulp_workflow/issues/36)
 
 ---
 
@@ -33,13 +33,13 @@ No significant changes.
   ``{"state": "canceled"}`` now cancels in-flight child tasks and queued
   continuations via the workflow's ``TaskGroup``; canceling the
   ``TaskGroup`` directly also propagates ``CANCELED`` to the ``Workflow``.
-  [#4](https://github.com/daviddavis/pulp_workflow/issues/4)
+  [#4](https://github.com/pulp/pulp_workflow/issues/4)
 - Added user-registered callbacks that fire on `Workflow` lifecycle events. A new `CallbackService`
   resource (modeled after pulpcore's `SigningService`) points at an absolute path to an executable; it
   is attached to a workflow via a `WorkflowCallback` whose `callback_type` selects the event
   (`running`, `completed`, etc). The script runs as a Pulp task with workflow context available as
   environment variables.
-  [#10](https://github.com/daviddavis/pulp_workflow/issues/10)
+  [#10](https://github.com/pulp/pulp_workflow/issues/10)
 - Added support for ``pulp_labels`` on Workflows. Labels can be set at create
   time, updated via the ``set_label``/``unset_label`` actions, and used to
   filter the list endpoint with ``pulp_label_select``.
