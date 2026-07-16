@@ -40,8 +40,8 @@ site_name: PulpWorkflow Client
 site_description: Workflow bindings
 site_author: Pulp Team
 site_url: https://docs.pulpproject.org/pulp_workflow_client/
-repo_name: daviddavis/pulp_workflow
-repo_url: https://github.com/daviddavis/pulp_workflow
+repo_name: pulp/pulp_workflow
+repo_url: https://github.com/pulp/pulp_workflow
 theme: readthedocs
 DOCSYAML
 
