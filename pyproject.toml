@@ -8,7 +8,7 @@ build-backend = 'setuptools.build_meta'
 [project]
 name = "pulp-workflow"
 version = "0.3.0.dev"
-description = "Pulp plugin for managing task schedules via CRUD API"
+description = "Pulp plugin for scheduling and orchestrating workflows of tasks"
 readme = "README.md"
 license = {file = "LICENSE"}
 classifiers = [
