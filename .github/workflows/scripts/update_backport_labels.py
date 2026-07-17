@@ -29,9 +29,7 @@ headers = {
 session.headers.update(headers)
 
 # get all labels from the repository's current state
-response = session.get(
-    "https://api.github.com/repos/daviddavis/pulp_workflow/labels", headers=headers
-)
+response = session.get("https://api.github.com/repos/pulp/pulp_workflow/labels", headers=headers)
 assert response.status_code == 200
 old_labels = set([x["name"] for x in response.json() if x["name"].startswith("backport-")])
 
@@ -47,7 +45,7 @@ new_labels = {"backport-" + x for x in branches}
 # delete old labels that are not in new labels
 for label in old_labels.difference(new_labels):
     response = session.delete(
-        f"https://api.github.com/repos/daviddavis/pulp_workflow/labels/{label}", headers=headers
+        f"https://api.github.com/repos/pulp/pulp_workflow/labels/{label}", headers=headers
     )
     assert response.status_code == 204
 
@@ -55,7 +53,7 @@ for label in old_labels.difference(new_labels):
 for label in new_labels.difference(old_labels):
     color = random_color()
     response = session.post(
-        "https://api.github.com/repos/daviddavis/pulp_workflow/labels",
+        "https://api.github.com/repos/pulp/pulp_workflow/labels",
         headers=headers,
         json={"name": label, "color": color},
     )
