@@ -40,10 +40,12 @@ pulpcore & pulp-file functional tests require both client bindings to be install
 
 ## Linting
 
-Run `ruff check .` against each change and fix any reported problems before committing.
+Run these checks locally against each change and fix any reported problems
+before committing:
 
 ```bash
-ruff check .
+ruff check .                    # lint code
+ruff format --check --diff .    # verify formatting (use `ruff format .` to fix)
 ```
 
 ## Modifying template_config.yml
