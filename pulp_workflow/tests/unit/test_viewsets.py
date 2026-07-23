@@ -1,5 +1,11 @@
+import pytest
+
+from pulpcore.plugin.util import get_url
+
+from pulp_workflow.app.models import Workflow, WorkflowRun
 from pulp_workflow.app.viewsets import (
     CallbackServiceViewSet,
+    WorkflowRunFilter,
     WorkflowRunListViewSet,
     WorkflowRunViewSet,
     WorkflowViewSet,
@@ -97,6 +103,30 @@ def test_flat_run_list_viewset_is_list_only():
     # It is a flat, non-nested endpoint at /workflow/workflow-runs/.
     assert WorkflowRunListViewSet.endpoint_name == "workflow-runs"
     assert getattr(WorkflowRunListViewSet, "parent_viewset", None) is None
+
+
+@pytest.mark.django_db
+def test_workflow_run_filter_workflow_in_returns_union():
+    """The ``workflow__in`` lookup returns the runs of every listed workflow and no others.
+
+    pulpcore resolves ``in`` values against related resources by href, so the filter is fed the
+    workflow hrefs (as a client would send them), not raw pks.
+    """
+    wf1 = Workflow.objects.create(name="wf-in-1")
+    wf2 = Workflow.objects.create(name="wf-in-2")
+    wf3 = Workflow.objects.create(name="wf-in-3")
+    run1 = WorkflowRun.objects.create(workflow=wf1)
+    run2 = WorkflowRun.objects.create(workflow=wf2)
+    # A run belonging to a workflow that is not in the filter must be excluded.
+    WorkflowRun.objects.create(workflow=wf3)
+
+    filterset = WorkflowRunFilter(
+        data={"workflow__in": f"{get_url(wf1)},{get_url(wf2)}"},
+        queryset=WorkflowRun.objects.all(),
+    )
+
+    assert filterset.is_valid(), filterset.errors
+    assert set(filterset.qs.values_list("pk", flat=True)) == {run1.pk, run2.pk}
 
 
 def test_flat_run_list_access_policy_requires_view_and_only_lists():
