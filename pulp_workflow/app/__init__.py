@@ -6,7 +6,7 @@ class PulpWorkflowPluginAppConfig(PulpPluginAppConfig):
 
     name = "pulp_workflow.app"
     label = "workflow"
-    version = "0.3.0.dev"
+    version = "0.3.0"
     python_package_name = "pulp-workflow"
     domain_compatible = True
 

@@ -8,6 +8,23 @@
 
 [//]: # (towncrier release notes start)
 
+## 0.3.0 (2026-07-23) {: #0.3.0 }
+
+#### Features {: #0.3.0-feature }
+
+- Workflows can now set a `dispatch_interval` to re-run on a recurring schedule. Added a `WorkflowRun`
+  resource (`/pulp/api/v3/workflow/workflow-runs/`), which tracks each execution of a workflow.
+  [#20](https://github.com/pulp/pulp_workflow/issues/20)
+
+#### Removals {: #0.3.0-removal }
+
+- Moved per-execution state off of the `Workflow` resource. The `state`, `started_at`,
+  `finished_at`, `error`, `current_task`, and `task_group` fields now live on the new
+  `WorkflowRun` resource. Support for workflow cancellation callbacks has also been removed for now.
+  [#20](https://github.com/pulp/pulp_workflow/issues/20)
+
+---
+
 ## 0.2.1 (2026-07-17) {: #0.2.1 }
 
 No significant changes.
