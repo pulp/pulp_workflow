@@ -1,5 +1,6 @@
 import uuid
 from contextlib import suppress
+from time import monotonic as time_monotonic
 from time import sleep
 
 import pytest
@@ -12,25 +13,23 @@ WORKFLOW_SLEEP_TIME = 2.0
 WORKFLOW_FINAL_STATES = {"completed", "failed", "canceled", "skipped"}
 
 
-class WorkflowError(Exception):
-    """Raised when a Workflow reaches a non-completed final state."""
+class WorkflowRunError(Exception):
+    """Raised when a WorkflowRun reaches a non-completed final state."""
 
-    def __init__(self, workflow):
-        self.workflow = workflow
+    def __init__(self, run):
+        self.run = run
         super().__init__(
-            f"Workflow {workflow.pulp_href} ended in state "
-            f"{workflow.state!r}: error={workflow.error!r}"
+            f"WorkflowRun {run.pulp_href} ended in state {run.state!r}: error={run.error!r}"
         )
 
 
-class WorkflowTimeoutError(Exception):
-    """Raised when a Workflow does not reach a final state in the timeout."""
+class WorkflowRunTimeoutError(Exception):
+    """Raised when a WorkflowRun does not reach a final state in the timeout."""
 
-    def __init__(self, workflow):
-        self.workflow = workflow
+    def __init__(self, run):
+        self.run = run
         super().__init__(
-            f"Workflow {workflow.pulp_href} did not reach a final state in time "
-            f"(state={workflow.state!r})"
+            f"WorkflowRun {run.pulp_href} did not reach a final state in time (state={run.state!r})"
         )
 
 
@@ -115,28 +114,50 @@ def callback_service_factory(workflow_bindings):
 
 
 @pytest.fixture(scope="session")
-def monitor_workflow(workflow_bindings):
-    """Wait for a Workflow to reach a final state.
+def workflow_runs(workflow_bindings):
+    """Return the WorkflowRun results for a workflow, newest first."""
 
-    Mirrors pulpcore's ``monitor_task`` fixture: returns the Workflow in ``completed`` state,
-    raises ``WorkflowTimeoutError`` if the timeout in seconds (defaulting to 30*60) is exceeded,
-    or raises ``WorkflowError`` if it reached any other final state.
+    def _workflow_runs(workflow_href):
+        return workflow_bindings.WorkflowRunsApi.list(workflow_href).results
+
+    return _workflow_runs
+
+
+@pytest.fixture(scope="session")
+def monitor_workflow(workflow_bindings, workflow_runs):
+    """Wait for a Workflow's run to reach a final state and return that run.
+
+    A Workflow is only a definition; its execution state lives on a ``WorkflowRun`` created
+    when the schedule fires. This first waits for the run to appear, then polls it. Mirrors
+    pulpcore's ``monitor_task`` fixture: returns the run in ``completed`` state, raises
+    ``WorkflowRunTimeoutError`` if the timeout in seconds (defaulting to 30*60) is exceeded, or
+    raises ``WorkflowRunError`` if it reached any other final state.
     """
 
     def _monitor_workflow(workflow_href, timeout=WORKFLOW_TIMEOUT):
-        # Always make at least one read attempt, even if the timeout is shorter than the sleep
-        # interval, so ``workflow`` is bound before the ``else`` branch can reference it.
-        attempts = max(1, int(timeout / WORKFLOW_SLEEP_TIME))
-        for _ in range(attempts):
-            workflow = workflow_bindings.WorkflowsApi.read(workflow_href)
-            if workflow.state in WORKFLOW_FINAL_STATES:
+        deadline = time_monotonic() + timeout
+        # First, wait for the scheduler to create a run for this workflow.
+        run = None
+        while time_monotonic() < deadline:
+            runs = workflow_runs(workflow_href)
+            if runs:
+                run = runs[0]
                 break
             sleep(WORKFLOW_SLEEP_TIME)
-        else:
-            raise WorkflowTimeoutError(workflow)
+        if run is None:
+            raise WorkflowRunTimeoutError(
+                type("_NoRun", (), {"pulp_href": workflow_href, "state": None, "error": None})()
+            )
 
-        if workflow.state != "completed":
-            raise WorkflowError(workflow)
-        return workflow
+        # Then wait for that run to reach a final state.
+        while run.state not in WORKFLOW_FINAL_STATES:
+            if time_monotonic() >= deadline:
+                raise WorkflowRunTimeoutError(run)
+            sleep(WORKFLOW_SLEEP_TIME)
+            run = workflow_bindings.WorkflowRunsApi.read(run.pulp_href)
+
+        if run.state != "completed":
+            raise WorkflowRunError(run)
+        return run
 
     return _monitor_workflow

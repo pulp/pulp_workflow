@@ -1,4 +1,9 @@
-from pulp_workflow.app.viewsets import CallbackServiceViewSet, WorkflowViewSet
+from pulp_workflow.app.viewsets import (
+    CallbackServiceViewSet,
+    WorkflowRunListViewSet,
+    WorkflowRunViewSet,
+    WorkflowViewSet,
+)
 
 
 def test_access_policy_requires_view_for_read():
@@ -36,6 +41,79 @@ def test_locked_roles():
     # has been removed.
     for perms in roles.values():
         assert "workflow.delete_workflow" not in perms
+
+
+def test_locked_roles_include_run_permissions():
+    """Run view/change permissions are bundled into the workflow roles."""
+    roles = WorkflowViewSet.LOCKED_ROLES
+    assert "workflow.view_workflowrun" in roles["workflow.workflow_viewer"]
+    assert "workflow.view_workflowrun" in roles["workflow.workflow_admin"]
+    assert "workflow.change_workflowrun" in roles["workflow.workflow_admin"]
+    # A plain viewer must not be able to cancel (change) runs.
+    assert "workflow.change_workflowrun" not in roles["workflow.workflow_viewer"]
+
+
+def test_run_access_policy_requires_view_for_read():
+    """WorkflowRun read actions require view_workflowrun permission."""
+    policy = WorkflowRunViewSet.DEFAULT_ACCESS_POLICY
+    read_stmt = policy["statements"][0]
+    assert set(read_stmt["action"]) == {"list", "retrieve", "my_permissions"}
+    assert "view_workflowrun" in read_stmt["condition"]
+
+
+def test_run_access_policy_requires_change_for_cancel():
+    """Canceling a run (partial_update) requires change_workflowrun permission."""
+    policy = WorkflowRunViewSet.DEFAULT_ACCESS_POLICY
+    write_stmt = policy["statements"][1]
+    assert write_stmt["action"] == ["partial_update"]
+    assert "change_workflowrun" in write_stmt["condition"]
+
+
+def test_run_viewset_is_read_and_cancel_only():
+    """The run viewset exposes no create/destroy actions."""
+    from rest_framework import mixins
+
+    assert not issubclass(WorkflowRunViewSet, mixins.CreateModelMixin)
+    assert not issubclass(WorkflowRunViewSet, mixins.DestroyModelMixin)
+    assert issubclass(WorkflowRunViewSet, mixins.ListModelMixin)
+    assert issubclass(WorkflowRunViewSet, mixins.RetrieveModelMixin)
+
+
+def test_run_viewset_is_nested_under_workflows():
+    """The canonical run viewset is nested under workflows."""
+    assert WorkflowRunViewSet.parent_viewset is WorkflowViewSet
+    assert WorkflowRunViewSet.parent_lookup_kwargs == {"workflow_pk": "workflow__pk"}
+    assert WorkflowRunViewSet.endpoint_name == "runs"
+
+
+def test_flat_run_list_viewset_is_list_only():
+    """The flat top-level run collection exposes only list (no retrieve/cancel/create/destroy)."""
+    from rest_framework import mixins
+
+    assert issubclass(WorkflowRunListViewSet, mixins.ListModelMixin)
+    assert not issubclass(WorkflowRunListViewSet, mixins.RetrieveModelMixin)
+    assert not issubclass(WorkflowRunListViewSet, mixins.CreateModelMixin)
+    assert not issubclass(WorkflowRunListViewSet, mixins.DestroyModelMixin)
+    # It is a flat, non-nested endpoint at /workflow/workflow-runs/.
+    assert WorkflowRunListViewSet.endpoint_name == "workflow-runs"
+    assert getattr(WorkflowRunListViewSet, "parent_viewset", None) is None
+
+
+def test_flat_run_list_access_policy_requires_view_and_only_lists():
+    """The flat run list only allows list, gated on view_workflowrun."""
+    policy = WorkflowRunListViewSet.DEFAULT_ACCESS_POLICY
+    all_actions = {action for stmt in policy["statements"] for action in stmt["action"]}
+    assert all_actions == {"list"}
+    assert "view_workflowrun" in policy["statements"][0]["condition"]
+
+
+def test_flat_run_list_uses_distinct_binding_tag():
+    """The flat and nested run endpoints must land in different binding API classes.
+
+    They share the ``list`` action, so an identical tag would collide the generated ``list``
+    methods in one API class.
+    """
+    assert WorkflowRunListViewSet.pulp_tag_name != WorkflowRunViewSet.pulp_tag_name
 
 
 def test_callback_service_access_policy_requires_view_for_read():
