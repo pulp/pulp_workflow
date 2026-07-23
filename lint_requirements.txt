@@ -8,5 +8,5 @@
 bump-my-version
 check-manifest
 packaging
-ruff
+ruff<0.16.0
 yamllint
