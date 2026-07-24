@@ -8,6 +8,15 @@
 
 [//]: # (towncrier release notes start)
 
+## 0.4.0 (2026-07-24) {: #0.4.0 }
+
+#### Features {: #0.4.0-feature }
+
+- Added an `in` lookup to the `WorkflowRun` `workflow` filter (`workflow__in`) so the runs for
+  several workflows can be fetched in a single list request.
+
+---
+
 ## 0.2.1 (2026-07-17) {: #0.2.1 }
 
 No significant changes.
