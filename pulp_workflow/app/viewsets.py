@@ -275,14 +275,15 @@ class WorkflowRunFilter(BaseFilterSet):
 
     Shared by the nested (``/workflow/workflows/<workflow_pk>/runs/``) and flat
     (``/workflow/workflow-runs/``) run endpoints. The ``workflow`` filter is primarily useful on
-    the flat endpoint to scope to a single workflow's run history; on the nested endpoint the
+    the flat endpoint to scope to a single workflow's run history (or, via ``workflow__in``, to
+    batch-fetch the runs for several workflows in one request); on the nested endpoint the
     workflow is already implied by the URL.
     """
 
     class Meta:
         model = WorkflowRun
         fields = {
-            "workflow": ["exact"],
+            "workflow": ["exact", "in"],
             "state": ["exact", "in", "ne"],
             "pulp_created": DATETIME_FILTER_OPTIONS,
             "started_at": DATETIME_FILTER_OPTIONS,
