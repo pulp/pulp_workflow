@@ -83,7 +83,8 @@ s3_test: true
 minio_access_key: "${MINIO_ACCESS_KEY}"
 minio_secret_key: "${MINIO_SECRET_KEY}"
 pulp_scenario_settings: {"MEDIA_ROOT": "", "STORAGES": {"default": {"BACKEND": "storages.backends.s3boto3.S3Boto3Storage", "OPTIONS": {"access_key": "AKIAIT2Z5TDYPX3ARJBA", "addressing_style": "path", "bucket_name": "pulp3", "default_acl": "@none", "endpoint_url": "http://minio:9000", "region_name": "eu-central-1", "secret_key": "fqRvjWaPU5o0fCqQuUWbj9Fainj2pVZtBCiDiieS", "signature_version": "s3v4"}}, "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"}}, "api_root": "/rerouted/djnd/", "domain_enabled": true}
-pulp_scenario_env: {}
+# MinIO omits 100-continue on 0-byte PUTs; stock botocore hangs without this (boto/botocore#3123).
+pulp_scenario_env: {"BOTO_EXPERIMENTAL__NO_EMPTY_CONTINUE": "true"}
 VARSYAML
 fi
 
