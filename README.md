@@ -5,6 +5,7 @@
 A Pulp plugin that introduces the `Workflow` model. Workflows build on top of
 tasks in Pulp allowing users to:
 * Schedule tasks to run at any given time
+* Run tasks periodically on a recurring interval
 * Run sequences of tasks in a specific order
 * Set up callback services to run on workflow lifecycle events (e.g. running,
 completed, failed, finished)
@@ -25,6 +26,17 @@ to run it yourself end-to-end.
 ## CLI
 
 If you're using the `pulp-cli`, be sure to check out [our pulp-workflow plugin](https://github.com/pulp/pulp-cli-workflow).
+
+## Periodic workflows
+
+Set `dispatch_interval` to a positive duration when creating a workflow
+(e.g. `"01:00:00"` for hourly runs). If omitted or `null`, it runs once.
+`start_time` controls the first run and defaults to now.
+
+Each execution creates a `WorkflowRun`; occurrences are skipped while a
+previous run is still in progress. PATCH the workflow with
+`{"state": "canceled"}` to stop future runs and cancel active runs.
+Canceling an individual run leaves the recurring schedule active.
 
 ## Endpoints
 
